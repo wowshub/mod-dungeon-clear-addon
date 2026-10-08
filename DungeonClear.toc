@@ -2,7 +2,9 @@
 ## Title: DungeonClear
 ## Notes: Autonomous dungeon-clearing companion for mod-dungeon-clear.
 ## Author: Jared
-## Version: 3.6
+## Version: 3.6-reborn1
+## Notes-zhCN: mod-dungeon-clear 副本自动清理助手（中英双语）。
 ## SavedVariables: DungeonClearDB
 
+Locale.lua
 DungeonClear.lua

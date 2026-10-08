@@ -2,6 +2,26 @@
 -- Drives the C++ mod-dungeon-clear module with a premium UI
 
 local AddonName = "DungeonClear"
+
+-- RebornWOW DCUI1A: Locale.lua not loaded (the .toc changed but the client was only
+-- /reload-ed; WoW reads a .toc file list only at startup). Run English-only.
+if not DCLoc or not DCBind then
+    local function same(s) return s end
+    DCL, DCLDetail, DCLName, DCLNote = same, same, same, same
+    function DCBind(widget, en) widget:SetText(en) end
+    function DCBindPair(widget, en) widget:SetText(en) end
+    DCLoc = {
+        IsZh = function() return false end,
+        OnChange = function() end,
+        Init = function() end,
+        Apply = function() end,
+        AddButton = function(btn) btn:SetText("中文") end,
+        Toggle = function()
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333DungeonClear: 中文需要完全重启游戏客户端（/reload 不会加载新文件 Locale.lua）。" ..
+                " Restart the game client to enable Chinese.|r")
+        end,
+    }
+end
 local Prefix = "DC"
 
 -- DB Setup
@@ -143,8 +163,9 @@ frame:SetBackdropBorderColor(0.20, 0.22, 0.28, 1.0)
 
 -- Header Text
 local header = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-header:SetPoint("TOP", frame, "TOP", 0, -12)
-header:SetText("Dungeon Clear")
+-- Left-aligned so the 中文/EN + Tiny buttons on the right never overlap it.
+header:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -12)
+DCBind(header, "Dungeon Clear")
 header:SetTextColor(0.24, 0.60, 1.0) -- Premium blue
 
 -- Close Button
@@ -176,12 +197,12 @@ statusFrame:SetBackdropBorderColor(0.15, 0.17, 0.22, 0.8)
 -- Status fields
 local statusLabel = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 statusLabel:SetPoint("TOPLEFT", statusFrame, "TOPLEFT", 10, -10)
-statusLabel:SetText("Mode Status:")
+DCBind(statusLabel, "Mode Status:")
 statusLabel:SetTextColor(0.8, 0.8, 0.8)
 
 local statusVal = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 statusVal:SetPoint("LEFT", statusLabel, "RIGHT", 5, 0)
-statusVal:SetText("OFF")
+statusVal:SetText(DCL("OFF"))
 statusVal:SetTextColor(0.5, 0.5, 0.5)
 
 -- Pull-mode readout. Mirrors the segmented control's active state and, in
@@ -189,17 +210,17 @@ statusVal:SetTextColor(0.5, 0.5, 0.5)
 -- crammed into the Dyn segment label, where it overflowed the button.
 local pullModeLabel = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 pullModeLabel:SetPoint("TOPLEFT", statusLabel, "BOTTOMLEFT", 0, -8)
-pullModeLabel:SetText("Pull Mode:")
+DCBind(pullModeLabel, "Pull Mode:")
 pullModeLabel:SetTextColor(0.8, 0.8, 0.8)
 
 local pullModeVal = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 pullModeVal:SetPoint("LEFT", pullModeLabel, "RIGHT", 5, 0)
-pullModeVal:SetText("Dynamic")
+pullModeVal:SetText(DCL("Dynamic"))
 pullModeVal:SetTextColor(0.6, 0.6, 0.6)
 
 local stateLabel = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 stateLabel:SetPoint("TOPLEFT", pullModeLabel, "BOTTOMLEFT", 0, -8)
-stateLabel:SetText("Current State:")
+DCBind(stateLabel, "Current State:")
 stateLabel:SetTextColor(0.8, 0.8, 0.8)
 
 local stateVal = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -210,7 +231,7 @@ local stateVal = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight
 stateVal:SetPoint("TOPLEFT", stateLabel, "TOPRIGHT", 5, 0)
 stateVal:SetWidth(196)
 stateVal:SetJustifyH("LEFT")
-stateVal:SetText("Inactive")
+stateVal:SetText(DCL("Inactive"))
 stateVal:SetTextColor(0.6, 0.6, 0.6)
 
 -- Free-text detail sub-line under the state (who we're waiting on, what we're
@@ -233,7 +254,7 @@ local targetLabel = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal
 -- with margin; everything below shifts down the same 10px (see the matching
 -- statusFrame / frame height bumps) so no new overlap is introduced.
 targetLabel:SetPoint("TOPLEFT", stateLabel, "BOTTOMLEFT", 0, -44)
-targetLabel:SetText("Next Boss:")
+DCBind(targetLabel, "Next Boss:")
 targetLabel:SetTextColor(0.8, 0.8, 0.8)
 
 local targetVal = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -245,12 +266,12 @@ targetVal:SetPoint("LEFT", targetLabel, "RIGHT", 5, 0)
 targetVal:SetWidth(210)
 targetVal:SetJustifyH("LEFT")
 targetVal:SetWordWrap(false)
-targetVal:SetText("None")
+targetVal:SetText(DCL("None"))
 targetVal:SetTextColor(1, 1, 1)
 
 local stallLabel = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 stallLabel:SetPoint("TOPLEFT", targetLabel, "BOTTOMLEFT", 0, -8)
-stallLabel:SetText("Warning:")
+DCBind(stallLabel, "Warning:")
 stallLabel:SetTextColor(0.9, 0.2, 0.2)
 stallLabel:Hide()
 
@@ -323,7 +344,7 @@ tinyIndicator:Hide()
 
 local tinyText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 tinyText:SetPoint("LEFT", tinyIndicator, "RIGHT", 6, 0)
-tinyText:SetText("Off")
+tinyText:SetText(DCL("Off"))
 tinyText:Hide()
 
 -- Click target over the tiny circle; created after SendDcCommand is defined so
@@ -331,7 +352,7 @@ tinyText:Hide()
 local tinyToggle
 
 -- Compact state -> (label, color) for the tiny line
-local function FormatStateTiny(state)
+local function FormatStateTinyEN(state)
     if state == "paused" then return "Paused", {0.9, 0.8, 0.2}
     elseif state == "pulling" then return "Pulling to Camp", {0.3, 0.8, 1}
     elseif state == "moving" then return "Advancing", {0.2, 0.7, 1}
@@ -348,6 +369,10 @@ local function FormatStateTiny(state)
     end
     return "Active", {0.8, 0.8, 0.8}
 end
+local function FormatStateTiny(state)
+    local label, color = FormatStateTinyEN(state)
+    return DCL(label), color
+end
 
 local function RgbToHex(c)
     return string.format("%02x%02x%02x", math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5))
@@ -363,7 +388,10 @@ local function UpdateTinyWidth()
 end
 
 -- Helper to update status styling
+-- Last STATUS seen, replayed when the language changes (DCLoc.OnChange below).
+local lastStatusArgs
 local function UpdateStatusUI(enabled, targetName, state, stallReason, detail, pullMode, pullDec)
+    lastStatusArgs = { enabled, targetName, state, stallReason, detail, pullMode, pullDec }
     isPaused = (state == "paused")
     pullSetting = tonumber(pullMode) or 2
     if not PullStates[pullSetting] then pullSetting = 2 end
@@ -371,12 +399,12 @@ local function UpdateStatusUI(enabled, targetName, state, stallReason, detail, p
     if not enabled or enabled == "0" then
         isDCOn = false
         isPaused = false
-        statusVal:SetText("OFF")
+        statusVal:SetText(DCL("OFF"))
         statusVal:SetTextColor(0.5, 0.5, 0.5)
-        stateVal:SetText("Inactive")
+        stateVal:SetText(DCL("Inactive"))
         stateVal:SetTextColor(0.6, 0.6, 0.6)
         detailVal:SetText("")
-        targetVal:SetText("None")
+        targetVal:SetText(DCL("None"))
         targetVal:SetTextColor(0.6, 0.6, 0.6)
         stallLabel:Hide()
         stallVal:Hide()
@@ -384,10 +412,10 @@ local function UpdateStatusUI(enabled, targetName, state, stallReason, detail, p
     else
         isDCOn = true
         if isPaused then
-            statusVal:SetText("PAUSED")
+            statusVal:SetText(DCL("PAUSED"))
             statusVal:SetTextColor(0.9, 0.8, 0.2) -- Yellow
         else
-            statusVal:SetText("ON")
+            statusVal:SetText(DCL("ON"))
             statusVal:SetTextColor(0.1, 0.9, 0.1) -- Green
         end
 
@@ -434,26 +462,30 @@ local function UpdateStatusUI(enabled, targetName, state, stallReason, detail, p
             stateText = "Idle / Waiting"
             stateColor = {0.6, 0.6, 0.6}
         end
-        stateVal:SetText(stateText)
+        stateVal:SetText(DCL(stateText))
         stateVal:SetTextColor(unpack(stateColor))
 
         if state == "paused" then
             -- `detail` carries WHY we're paused (a manual hold, or a door the
             -- tank can't open) and can be a long sentence, so surface it on the
             -- wrapping sub-line rather than the fixed-width state label above.
-            local reason = (detail and detail ~= "") and detail or "holding position"
-            detailVal:SetText("Holding (" .. reason .. "); boss progress saved.")
+            local reason = (detail and detail ~= "") and DCLDetail(detail) or DCLDetail("holding position")
+            if DCLoc.IsZh() then
+                detailVal:SetText("原地待命（" .. reason .. "），首领进度已保存。")
+            else
+                detailVal:SetText("Holding (" .. reason .. "); boss progress saved.")
+            end
         else
-            detailVal:SetText(detail or "")
+            detailVal:SetText(DCLDetail(detail) or "")
         end
 
-        targetVal:SetText(targetName or "None")
+        targetVal:SetText(DCLName(targetName) or DCL("None"))
         targetVal:SetTextColor(1, 0.82, 0) -- Gold
 
         if stallReason and stallReason ~= "" then
             stallLabel:Show()
             stallVal:Show()
-            stallVal:SetText(stallReason)
+            stallVal:SetText(DCLDetail(stallReason))
         else
             stallLabel:Hide()
             stallVal:Hide()
@@ -466,7 +498,7 @@ local function UpdateStatusUI(enabled, targetName, state, stallReason, detail, p
     -- Update the tiny single-line display: circle + status + boss
     if not enabled or enabled == "0" then
         tinyIndicator:SetTexture("Interface\\FriendsFrame\\StatusIcon-Offline")
-        tinyText:SetText("|cff999999Off|r")
+        tinyText:SetText("|cff999999" .. DCL("Off") .. "|r")
     else
         if isPaused then
             -- Yellow "away" dot signals a held/paused clear.
@@ -484,27 +516,27 @@ local function UpdateStatusUI(enabled, targetName, state, stallReason, detail, p
         -- detail. For an ERROR state (stalled / door-blocked) the server leaves
         -- `detail` empty and carries the explanation in the separate stall field,
         -- so surface THAT (capped) instead of a bare, uninformative "Blocked".
-        local actionText = (detail and detail ~= "") and detail or tLabel
+        local actionText = (detail and detail ~= "") and DCLDetail(detail) or tLabel
         if (not detail or detail == "") and stallReason and stallReason ~= "" then
-            actionText = stallReason
-            if string.len(actionText) > 64 then
+            actionText = DCLDetail(stallReason)
+            if not DCLoc.IsZh() and string.len(actionText) > 64 then
                 actionText = string.sub(actionText, 1, 63) .. "..."
             end
         end
         local line = "|cff" .. RgbToHex(tColor) .. actionText .. "|r"
         if targetName and targetName ~= "None" and targetName ~= "" then
             -- grey vertical divider between action and boss name
-            line = line .. "  |cff808080||" .. "|r  |cffffd100" .. targetName .. "|r"
+            line = line .. "  |cff808080||" .. "|r  |cffffd100" .. DCLName(targetName) .. "|r"
         end
         tinyText:SetText(line)
     end
     -- Pause/Resume button: label reflects current state; disabled when DC is off.
     if pauseBtn then
         if not isDCOn then
-            pauseBtn:SetText("Pause")
+            pauseBtn:SetText(DCL("Pause"))
             pauseBtn:Disable()
         else
-            pauseBtn:SetText(isPaused and "Resume" or "Pause")
+            pauseBtn:SetText(DCL(isPaused and "Resume" or "Pause"))
             pauseBtn:Enable()
         end
     end
@@ -555,7 +587,7 @@ local function SendDcCommand(subCmd, param, silent)
     if me and me ~= "" then
         SendAddonMessage("DC", payload, "WHISPER", me)
     elseif not silent and param ~= "addon" then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffff3333DungeonClear: cannot send bot commands right now.|r")
+        DEFAULT_CHAT_FRAME:AddMessage(DCL("|cffff3333DungeonClear: cannot send bot commands right now.|r"))
     end
 end
 
@@ -564,7 +596,7 @@ end
 local onBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 onBtn:SetSize(68, 24)
 onBtn:SetPoint("TOPLEFT", statusFrame, "BOTTOMLEFT", 0, -8)
-onBtn:SetText("On")
+DCBind(onBtn, "On")
 onBtn:SetScript("OnClick", function()
     SendDcCommand("on")
     -- The leader tank is elected on "on"; push the player's overrides right
@@ -575,13 +607,13 @@ end)
 local offBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 offBtn:SetSize(68, 24)
 offBtn:SetPoint("LEFT", onBtn, "RIGHT", 11, 0)
-offBtn:SetText("Off")
+DCBind(offBtn, "Off")
 offBtn:SetScript("OnClick", function() SendDcCommand("off") end)
 
 local skipBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 skipBtn:SetSize(68, 24)
 skipBtn:SetPoint("LEFT", offBtn, "RIGHT", 11, 0)
-skipBtn:SetText("Skip")
+DCBind(skipBtn, "Skip")
 skipBtn:SetScript("OnClick", function() SendDcCommand("skip") end)
 
 -- Pause/Resume toggle. Label + enabled state are driven by UpdateStatusUI.
@@ -593,7 +625,7 @@ skipBtn:SetScript("OnClick", function() SendDcCommand("skip") end)
 pauseBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 pauseBtn:SetSize(68, 24)
 pauseBtn:SetPoint("LEFT", skipBtn, "RIGHT", 11, 0)
-pauseBtn:SetText("Pause")
+pauseBtn:SetText(DCL("Pause"))
 pauseBtn:SetScript("OnClick", function()
     SendDcCommand("pause", isPaused and "resume" or "pause")
 end)
@@ -605,7 +637,7 @@ end)
 -- is wired through but is a no-op stub server-side for now.
 pullLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 pullLabel:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 2, -14)
-pullLabel:SetText("Pull:")
+DCBind(pullLabel, "Pull:")
 pullLabel:SetTextColor(0.8, 0.8, 0.8)
 
 local PULL_SEG_W = 86
@@ -617,7 +649,7 @@ for i = 0, 2 do
     else
         seg:SetPoint("LEFT", pullSegs[i - 1], "RIGHT", 2, 0)
     end
-    seg:SetText(PullStates[i].seg)
+    seg:SetText(DCL(PullStates[i].seg))
     seg:SetScript("OnClick", function()
         SendDcCommand("pull", PullStates[i].cmd)
     end)
@@ -636,7 +668,7 @@ spectateBtn:SetSize(100, 24)
 -- The pull-row segments span -8..-32 below onBtn (24px buttons centered on
 -- the label); start this row at -40 to keep the 8px row gap.
 spectateBtn:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 0, -40)
-spectateBtn:SetText("Spectate")
+DCBind(spectateBtn, "Spectate")
 -- Left-click = the free-flying camera. Right-click (or shift-click) = follow
 -- cam: the view rides the run's tank instead of flying free, which is what you
 -- want when watching rather than exploring. Both are the same server toggle
@@ -681,15 +713,15 @@ end
 spectateBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     if not spectateAvailable then
-        GameTooltip:SetText("Spectator mode disabled", 1, 1, 1)
-        GameTooltip:AddLine("This server has turned off the spectator camera.",
+        GameTooltip:SetText(DCL("Spectator mode disabled"), 1, 1, 1)
+        GameTooltip:AddLine(DCL("This server has turned off the spectator camera."),
             0.8, 0.8, 0.8, true)
         GameTooltip:Show()
         return
     end
-    GameTooltip:SetText("Spectate", 1, 1, 1)
-    GameTooltip:AddLine("Left-click: free-flying camera.", 0.8, 0.8, 0.8, true)
-    GameTooltip:AddLine("Right-click: follow cam \226\128\148 your view rides the tank.",
+    GameTooltip:SetText(DCL("Spectate"), 1, 1, 1)
+    GameTooltip:AddLine(DCL("Left-click: free-flying camera."), 0.8, 0.8, 0.8, true)
+    GameTooltip:AddLine(DCL("Right-click: follow cam \226\128\148 your view rides the tank."),
         0.8, 0.8, 0.8, true)
     GameTooltip:Show()
 end)
@@ -710,8 +742,8 @@ spectatePrevBtn:SetScript("OnClick", function()
 end)
 spectatePrevBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetText("Previous bot", 1, 1, 1)
-    GameTooltip:AddLine("Move the camera to the previous bot in the instance.",
+    GameTooltip:SetText(DCL("Previous bot"), 1, 1, 1)
+    GameTooltip:AddLine(DCL("Move the camera to the previous bot in the instance."),
         0.8, 0.8, 0.8, true)
     GameTooltip:Show()
 end)
@@ -727,9 +759,9 @@ spectateNextBtn:SetScript("OnClick", function()
 end)
 spectateNextBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetText("Next bot", 1, 1, 1)
-    GameTooltip:AddLine("Move the camera to the next bot in the instance. " ..
-        "Starts the follow cam if it isn't running.", 0.8, 0.8, 0.8, true)
+    GameTooltip:SetText(DCL("Next bot"), 1, 1, 1)
+    GameTooltip:AddLine(DCL("Move the camera to the next bot in the instance. " ..
+        "Starts the follow cam if it isn't running."), 0.8, 0.8, 0.8, true)
     GameTooltip:Show()
 end)
 spectateNextBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -744,7 +776,7 @@ spectateNextBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 spectateResetBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 spectateResetBtn:SetSize(110, 24)
 spectateResetBtn:SetPoint("TOPRIGHT", pauseBtn, "BOTTOMRIGHT", 0, -40)
-spectateResetBtn:SetText("Reset Camera")
+DCBind(spectateResetBtn, "Reset Camera")
 
 -- Greyed out whenever no camera is running, so the button can only ever end one.
 UpdateResetBtnState = function()
@@ -796,9 +828,9 @@ end)
 
 spectateResetBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetText("Reset Camera", 1, 1, 1)
-    GameTooltip:AddLine("Ends the spectator camera and hands control of your " ..
-        "own character back to you.", 0.8, 0.8, 0.8, true)
+    GameTooltip:SetText(DCL("Reset Camera"), 1, 1, 1)
+    GameTooltip:AddLine(DCL("Ends the spectator camera and hands control of your " ..
+        "own character back to you."), 0.8, 0.8, 0.8, true)
     GameTooltip:Show()
 end)
 spectateResetBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -829,13 +861,13 @@ end)
 tinyToggle:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
     if not isDCOn then
-        GameTooltip:AddLine("Dungeon Clear")
-        GameTooltip:AddLine("Left-click to start the clear", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine(DCL("Dungeon Clear"))
+        GameTooltip:AddLine(DCL("Left-click to start the clear"), 0.8, 0.8, 0.8, true)
     else
-        GameTooltip:AddLine(isPaused and "Paused" or "Clearing")
-        GameTooltip:AddLine(isPaused and "Left-click to resume" or "Left-click to pause", 0.8, 0.8, 0.8, true)
+        GameTooltip:AddLine(DCL(isPaused and "Paused" or "Clearing"))
+        GameTooltip:AddLine(DCL(isPaused and "Left-click to resume" or "Left-click to pause"), 0.8, 0.8, 0.8, true)
     end
-    GameTooltip:AddLine("Right-click to expand the window", 0.8, 0.8, 0.8, true)
+    GameTooltip:AddLine(DCL("Right-click to expand the window"), 0.8, 0.8, 0.8, true)
     GameTooltip:Show()
 end)
 tinyToggle:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -854,7 +886,7 @@ tinyPullDot:SetTexture("Interface\\FriendsFrame\\StatusIcon-Offline")
 
 tinyPullText = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 tinyPullText:SetPoint("LEFT", tinyPullDot, "RIGHT", 4, 0)
-tinyPullText:SetText("Off")
+tinyPullText:SetText(DCL("Off"))
 
 -- The action/boss status text now trails the pull caption.
 tinyText:ClearAllPoints()
@@ -880,8 +912,8 @@ tinyPullToggle:SetScript("OnClick", function(self, button)
 end)
 tinyPullToggle:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
-    GameTooltip:AddLine("Pull Mode")
-    GameTooltip:AddLine("Click to cycle: Leeroy / Advanced / Dynamic", 0.8, 0.8, 0.8, true)
+    GameTooltip:AddLine(DCL("Pull Mode"))
+    GameTooltip:AddLine(DCL("Click to cycle: Leeroy / Advanced / Dynamic"), 0.8, 0.8, 0.8, true)
     GameTooltip:Show()
 end)
 tinyPullToggle:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -903,9 +935,9 @@ UpdatePullControls = function()
     -- when Dynamic. Dimmed while DC is off (the setting still applies on the next
     -- run, so show it rather than blanking it).
     if pullModeVal then
-        local text = PullStates[pullSetting].seg
+        local text = DCL(PullStates[pullSetting].seg)
         if pullSetting == 2 then
-            text = "Dynamic" .. (verdict and (" (" .. verdict.full .. ")") or "")
+            text = DCL("Dynamic") .. (verdict and (" (" .. DCL(verdict.full) .. ")") or "")
         end
         pullModeVal:SetText(text)
         if not isDCOn then
@@ -922,7 +954,7 @@ UpdatePullControls = function()
             -- Segments keep their base labels (Leeroy / Advanced / Dynamic); the
             -- active state and its live verdict are surfaced in the Pull Mode
             -- readout above instead.
-            seg:SetText(PullStates[i].seg)
+            seg:SetText(DCL(PullStates[i].seg))
             -- Always clickable: the pull mode is settable before the run starts.
             seg:Enable()
             if i == pullSetting then
@@ -954,10 +986,10 @@ UpdatePullControls = function()
         -- Dynamic. A grey "|" pipe caps the caption to divide it from the action
         -- line. While DC is off the state is a pending preference, so a dim factor
         -- darkens both the dot and caption to read as "set, not yet running".
-        local label = PullStates[pullSetting].seg
+        local label = DCL(PullStates[pullSetting].seg)
         local color = PullStates[pullSetting].color
         if verdict then
-            label = label .. ": " .. verdict.full
+            label = label .. ": " .. DCL(verdict.full)
             color = verdict.color
         end
         local dim = isDCOn and 1.0 or 0.6
@@ -993,7 +1025,7 @@ local listLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 -- Below the pull + spectate rows: onBtn bottom, minus the 8px gap + 24px
 -- segment row + 8px gap + 24px spectate row + 12px.
 listLabel:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 0, -76)
-listLabel:SetText("Dungeon Bosses")
+DCBind(listLabel, "Dungeon Bosses")
 listLabel:SetTextColor(0.24, 0.60, 1.0)
 
 -- Boss List Scroll Frame container
@@ -1081,7 +1113,7 @@ for i = 1, VISIBLE_ROWS do
     row.goBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     row.goBtn:SetSize(46, 20)
     row.goBtn:SetPoint("RIGHT", row, "RIGHT", -6, 0)
-    row.goBtn:SetText("Go")
+    DCBind(row.goBtn, "Go")
 
     -- Hovering a row with a folded event shows the full note in a tooltip, so a
     -- name too long for the bottom band (which truncates) is still readable.
@@ -1091,11 +1123,11 @@ for i = 1, VISIBLE_ROWS do
         if not self.eventNoteFull or self.eventNoteFull == "" then return end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         if self.bossName then
-            GameTooltip:AddLine(self.bossName, 1, 1, 1)
+            GameTooltip:AddLine(DCLName(self.bossName), 1, 1, 1)
         end
         -- Multiple folded events arrive joined by " | "; one tooltip line each.
         for note in string.gmatch(self.eventNoteFull, "[^|]+") do
-            GameTooltip:AddLine(strtrim(note), 0.78, 0.63, 0.18, true)
+            GameTooltip:AddLine(DCLNote(strtrim(note)), 0.78, 0.63, 0.18, true)
         end
         GameTooltip:Show()
     end)
@@ -1135,11 +1167,11 @@ local function FormatEventNote(note)
             local piece
             if string.find(seg, "%(done%)$") then
                 -- Ready-check tick doubles as the "completed" checkbox.
-                piece = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t |cff3fd03f" .. seg .. "|r"
+                piece = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t |cff3fd03f" .. DCLNote(seg) .. "|r"
             elseif string.find(seg, "%(skipped%)$") then
-                piece = "|cff888888- " .. seg .. "|r"
+                piece = "|cff888888- " .. DCLNote(seg) .. "|r"
             else
-                piece = "|cffc8a02e- " .. seg .. "|r"
+                piece = "|cffc8a02e- " .. DCLNote(seg) .. "|r"
             end
             table.insert(out, piece)
         end
@@ -1160,7 +1192,7 @@ RedrawBossList = function()
         row.eventNoteFull = nil
         row.text:ClearAllPoints()
         row.text:SetPoint("LEFT", row, "LEFT", 8, 0)
-        row.text:SetText("Loading boss list...")
+        row.text:SetText(DCL("Loading boss list..."))
         row.text:SetTextColor(0.6, 0.6, 0.6)
         row.sub:Hide()
         row.status:SetText("")
@@ -1184,7 +1216,7 @@ RedrawBossList = function()
             -- On split maps, tag the row with its region. Wing labels read like
             -- "Maraudon (Orange)"; show just the parenthetical ("Orange") to
             -- keep the row short, falling back to the full label otherwise.
-            local label = dataIndex .. ". " .. boss.name
+            local label = dataIndex .. ". " .. DCLName(boss.name)
             if boss.wing then
                 local region = boss.wing:match("%((.-)%)") or boss.wing
                 label = label .. " |cff9999ff(" .. region .. ")|r"
@@ -1254,7 +1286,7 @@ RedrawBossList = function()
                 showGo = false
             end
 
-            row.status:SetText(statusLabelText)
+            row.status:SetText(DCL(statusLabelText))
             row.status:SetTextColor(unpack(statusColor))
 
             if showGo then
@@ -1283,7 +1315,20 @@ end
 local tinyBtn = CreateFrame("Button", "DungeonClearTinyButton", frame, "UIPanelButtonTemplate")
 tinyBtn:SetSize(40, 20)
 tinyBtn:SetPoint("RIGHT", closeBtn, "LEFT", 2, 0)
-tinyBtn:SetText("Tiny")
+tinyBtn:SetText(DCL("Tiny"))
+
+-- RebornWOW: 中文 / EN switch, the same red button as the Witch Doctor talent panel.
+local langBtn = CreateFrame("Button", "DungeonClearLangButton", frame, "UIPanelButtonTemplate")
+langBtn:SetSize(44, 20)
+langBtn:SetPoint("RIGHT", tinyBtn, "LEFT", -2, 0)
+langBtn:SetScript("OnClick", function() DCLoc.Toggle() end)
+langBtn:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:AddLine(DCL("Switch the panel language"))
+    GameTooltip:Show()
+end)
+langBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+DCLoc.AddButton(langBtn)
 
 local toggleBossesBtn = CreateFrame("Button", "DungeonClearToggleBossesButton", frame)
 toggleBossesBtn:SetSize(24, 24)
@@ -1370,6 +1415,7 @@ UpdateLayout = function()
         header:Hide()
         closeBtn:Hide()
         tinyBtn:Hide()
+        langBtn:Hide()
         onBtn:Hide()
         offBtn:Hide()
         skipBtn:Hide()
@@ -1402,7 +1448,8 @@ UpdateLayout = function()
         header:Show()
         closeBtn:Show()
         tinyBtn:Show()
-        tinyBtn:SetText("Tiny")
+        langBtn:Show()
+        tinyBtn:SetText(DCL("Tiny"))
         onBtn:Show()
         offBtn:Show()
         skipBtn:Show()
@@ -1624,7 +1671,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
     elseif parts[1] == "CHAT" then
         -- Bot announcements routed through addon channel (silent)
         local chatMsg = parts[2] or ""
-        DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC] " .. chatMsg .. "|r")
+        DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC] " .. DCLDetail(chatMsg) .. "|r")
     elseif parts[1] == "ERROR" then
         -- The only error the server hook raises is "no tank bot found", which
         -- our background status/boss polls provoke constantly whenever the tank
@@ -1635,7 +1682,7 @@ local function OnAddonMessage(prefix, message, channel, sender)
         -- (one-shot, since this flips isDCOn false) and say so once.
         if isDCOn then
             UpdateStatusUI("0", nil, "off", nil)
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[DC] Tank bot is no longer in the group \226\128\148 dungeon clear turned off.|r")
+            DEFAULT_CHAT_FRAME:AddMessage(DCL("|cffff3333[DC] Tank bot is no longer in the group \226\128\148 dungeon clear turned off.|r"))
         end
     end
 end
@@ -1664,6 +1711,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             if UpdateLayout then
                 UpdateLayout()
             end
+            -- Language: saved choice, or the client locale on first run.
+            DCLoc.Init()
 
             if DungeonClearDB.visible then
                 frame:Show()
@@ -1758,13 +1807,14 @@ optionsPanel.name = "DungeonClear"
 
 local optTitle = optionsPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
 optTitle:SetPoint("TOPLEFT", optionsPanel, "TOPLEFT", 16, -16)
-optTitle:SetText("Dungeon Clear")
+DCBind(optTitle, "Dungeon Clear")
 optTitle:SetTextColor(0.24, 0.60, 1.0) -- match the main window header
 
 local optSubtitle = optionsPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 optSubtitle:SetPoint("TOPLEFT", optTitle, "BOTTOMLEFT", 0, -4)
 optSubtitle:SetText("Autonomous dungeon-clearing companion for mod-dungeon-clear.")
 optSubtitle:SetTextColor(0.6, 0.6, 0.6)
+DCBindPair(optSubtitle, optSubtitle:GetText(), "mod-dungeon-clear 的副本自动清理助手。")
 
 local optOverview = optionsPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
 optOverview:SetPoint("TOPLEFT", optSubtitle, "BOTTOMLEFT", 0, -14)
@@ -1777,9 +1827,14 @@ optOverview:SetText(
     "is doing and which boss it's heading for), and a boss list with a per-boss \"Go\" button. " ..
     "You must be in a party that contains a tank bot \226\128\148 the addon only relays commands.")
 
+DCBindPair(optOverview, optOverview:GetText(),
+    "一个 mod-playerbots 坦克机器人带着你的队伍，自己规划路线、清理小怪，一个首领一个首领地推进。" ..
+    "这个插件是它的操作面板：一键开始 / 停止 / 跳过 / 暂停-继续，实时显示机器人在做什么、要去打哪个首领，" ..
+    "首领列表里每行都有「前往」按钮。你必须和一个坦克机器人在同一队伍里——插件只负责转发指令。")
+
 local optCmdHeader = optionsPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
 optCmdHeader:SetPoint("TOPLEFT", optOverview, "BOTTOMLEFT", 0, -18)
-optCmdHeader:SetText("Commands & Controls")
+DCBind(optCmdHeader, "Commands & Controls")
 optCmdHeader:SetTextColor(0.24, 0.60, 1.0)
 
 local optCmdList = optionsPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
@@ -1809,10 +1864,25 @@ optCmdList:SetText(
     "|cffffd100Settings|r (sub-page)  \226\128\148  Override the server defaults (loot quality, rest %, " ..
     "party spread, pull tuning, …) for your own runs. Saved per character and re-applied each run.")
 
+DCBindPair(optCmdList, optCmdList:GetText(),
+    "|cffffd100/dc|r  ——  打开/关闭主窗口（总是以完整模式打开）。|cffffd100/dc lang|r 切换中文 / English。\n" ..
+    "|cffffd100开始 / 停止|r  ——  开始或停止自动清理。\n" ..
+    "|cffffd100跳过|r  ——  跳过当前首领 / 目标，去下一个。\n" ..
+    "|cffffd100暂停 / 继续|r  ——  让坦克原地待命但不结束清理，之后继续。\n" ..
+    "|cffffd100拉怪：直冲 / 引怪 / 智能|r  ——  |cff33d94d引怪|r：坦克冲进去拉一波怪，再引回队伍等待的位置（营地）一起打。" ..
+    "|cff4db3ff智能|r：坦克侦察每一波怪自动选择——单独的一小波就|cffffa61a直冲|r，房间里扎堆的就用稳妥的|cff4db3ff引怪|r。" ..
+    "|cff8c8c8c直冲|r：走上去原地开打。\n" ..
+    "|cffffd100观战|r  ——  左键进入自由飞行镜头，你的角色由机器人 AI 继续操作。右键改为跟随镜头，坦克死了自动换人。" ..
+    "再点一次（或 |cffffd100.dc spectate|r）回到自己身上。\n" ..
+    "|cffffd100< >|r（观战旁边）  ——  把镜头切到副本里任意一个机器人；没开镜头时自动开启跟随镜头。\n" ..
+    "|cffffd100前往|r（首领列表每行）  ——  让坦克直接去这个首领（会先开启清理）。\n" ..
+    "|cffffd100迷你|r  ——  把窗口收成一行、可拖动的小条。\n" ..
+    "|cffffd100设置|r（子页面）  ——  为你自己的副本覆盖服务器默认值（拾取品质、休整 %、队伍间距、拉怪参数……），按角色保存，每次进本自动应用。")
+
 local openBtn = CreateFrame("Button", nil, optionsPanel, "UIPanelButtonTemplate")
 openBtn:SetSize(160, 24)
 openBtn:SetPoint("TOPLEFT", optCmdList, "BOTTOMLEFT", 0, -20)
-openBtn:SetText("Open DungeonClear")
+DCBind(openBtn, "Open DungeonClear")
 openBtn:SetScript("OnClick", function()
     -- Mirror the /dc (no-arg) open branch: always reopen in full (non-tiny) mode.
     DungeonClearDB.tinyMode = false
@@ -1903,7 +1973,7 @@ local QualityInfo = {
 }
 local function QualityText(v)
     local info = QualityInfo[v] or QualityInfo[0]
-    return "|c" .. info.hex .. info.name .. "|r"
+    return "|c" .. info.hex .. DCL(info.name) .. "|r"
 end
 
 -- Setting type ids mirror DcType in the server registry.
@@ -1953,7 +2023,7 @@ local function RoundVal(stype, v)
 end
 
 local function FmtVal(stype, v)
-    if stype == DCT_BOOL then return (v ~= 0) and "On" or "Off" end
+    if stype == DCT_BOOL then return DCL((v ~= 0) and "On" or "Off") end
     if stype == DCT_FLOAT then return string.format("%.1f", v) end
     return tostring(math.floor(v + 0.5))
 end
@@ -1964,7 +2034,7 @@ settingsPanel.parent = optionsPanel.name  -- nests under "DungeonClear"
 
 local setTitle = settingsPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
 setTitle:SetPoint("TOPLEFT", settingsPanel, "TOPLEFT", 16, -16)
-setTitle:SetText("Dungeon Clear - Settings")
+DCBind(setTitle, "Dungeon Clear - Settings")
 setTitle:SetTextColor(0.24, 0.60, 1.0)
 
 local setIntro = settingsPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -1976,12 +2046,15 @@ setIntro:SetText(
     "immediately and are saved per character. You must be in a party with a tank " ..
     "bot for them to take effect; \"Default\" reverts a setting to the server value.")
 setIntro:SetTextColor(0.6, 0.6, 0.6)
+DCBindPair(setIntro, setIntro:GetText(),
+    "这些设置会为你自己的副本覆盖服务器默认值，立即生效，按角色保存。必须和坦克机器人在同一队伍才会生效；" ..
+    "「默认」把这一项恢复成服务器的值。")
 
 -- Reset-everything-to-server-default button.
 local resetAllBtn = CreateFrame("Button", nil, settingsPanel, "UIPanelButtonTemplate")
 resetAllBtn:SetSize(150, 22)
 resetAllBtn:SetPoint("TOPLEFT", setIntro, "BOTTOMLEFT", 0, -10)
-resetAllBtn:SetText("Reset All to Default")
+DCBind(resetAllBtn, "Reset All to Default")
 resetAllBtn:SetScript("OnClick", function()
     DungeonClearDB.settings = {}
     SendDcCommand("reset", "", true)  -- empty key = clear the whole run
@@ -2045,15 +2118,15 @@ local function CreateSettingRow(key, stype)
 
     row.label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     row.label:SetPoint("TOPLEFT", row, "TOPLEFT", 4, -2)
-    row.label:SetText(meta.label or key)
+    DCBind(row.label, meta.label or key)
     row.label:SetTextColor(0.92, 0.92, 0.92)
 
     if meta.desc then
         row:EnableMouse(true)
         row:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
-            GameTooltip:SetText(meta.label or key, 1, 1, 1)
-            GameTooltip:AddLine(meta.desc, 0.8, 0.8, 0.8, true)
+            GameTooltip:SetText(DCL(meta.label or key), 1, 1, 1)
+            GameTooltip:AddLine(DCL(meta.desc), 0.8, 0.8, 0.8, true)
             GameTooltip:Show()
         end)
         row:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -2063,7 +2136,7 @@ local function CreateSettingRow(key, stype)
     row.defBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     row.defBtn:SetSize(64, 18)
     row.defBtn:SetPoint("TOPRIGHT", row, "TOPRIGHT", -2, -2)
-    row.defBtn:SetText("Default")
+    DCBind(row.defBtn, "Default")
     row.defBtn:SetScript("OnClick", function()
         DungeonClearDB.settings[key] = nil
         SendDcCommand("reset", key, true)
@@ -2311,9 +2384,9 @@ end)
 
 minimapButton:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-    GameTooltip:AddLine("Dungeon Clear")
-    GameTooltip:AddLine("Left-click to toggle the window.", 1, 1, 1)
-    GameTooltip:AddLine("Drag to reposition this button.", 1, 1, 1)
+    GameTooltip:AddLine(DCL("Dungeon Clear"))
+    GameTooltip:AddLine(DCL("Left-click to toggle the window."), 1, 1, 1)
+    GameTooltip:AddLine(DCL("Drag to reposition this button."), 1, 1, 1)
     GameTooltip:Show()
 end)
 minimapButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -2333,6 +2406,18 @@ mmLoader:SetScript("OnEvent", function(self, _, name)
     end
 end)
 
+-- Re-render everything drawn from runtime state when the language flips.
+DCLoc.OnChange(function()
+    if lastStatusArgs then
+        UpdateStatusUI(unpack(lastStatusArgs, 1, 7))
+    else
+        UpdateStatusUI("0")
+    end
+    RedrawBossList()
+    if UpdateLayout then UpdateLayout() end
+    if BuildSettingsFromCache then BuildSettingsFromCache() end
+end)
+
 -- Slash Command Registration
 SLASH_DUNGEONCLEAR1 = "/dc"
 SlashCmdList["DUNGEONCLEAR"] = function(msg)
@@ -2345,6 +2430,8 @@ SlashCmdList["DUNGEONCLEAR"] = function(msg)
             UpdateLayout()
             frame:Show()
         end
+    elseif msg == "lang" then
+        DCLoc.Toggle()
     else
         -- Parse "/dc <sub> [param]" and send via addon message
         local subCmd, param = msg:match("^(%S+)%s*(.*)$")
