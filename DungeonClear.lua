@@ -128,7 +128,7 @@ local BuildSettingsFromCache    -- render rows from the cached schema at load
 
 -- UI Frame Creation
 local frame = CreateFrame("Frame", "DungeonClearFrame", UIParent)
-frame:SetSize(330, 420)
+frame:SetSize(330, 452)
 frame:SetMovable(true)
 frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
@@ -1020,11 +1020,62 @@ UpdatePullControls = function()
     end
 end
 
+-- Auto-play row (RebornWOW DCSB1A): hand your own character to the playerbot AI
+-- in a chosen role, or take it back, without typing commands. The server wraps
+-- playerbots' self-bot mode ("selfbot tank|heal|dps|off") and answers with
+-- "SELFBOT <1|0> <role>"; the active segment is highlighted. Pair it with
+-- Spectate to watch the whole run while the AI plays your character.
+local selfBotUI = { role = nil, btns = {} }  -- role nil = you are playing
+selfBotUI.label = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+selfBotUI.label:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 2, -78)
+DCBind(selfBotUI.label, "Auto-play:")
+selfBotUI.label:SetTextColor(0.8, 0.8, 0.8)
+
+local SELFBOT_SEGS = {
+    { key = "tank", label = "Tank",   tip = "Let the AI play your character as the tank." },
+    { key = "heal", label = "Heal",   tip = "Let the AI play your character as a healer." },
+    { key = "dps",  label = "DPS",    tip = "Let the AI play your character as damage." },
+    { key = "off",  label = "Manual", tip = "Take your character back and play it yourself." },
+}
+for i, seg in ipairs(SELFBOT_SEGS) do
+    local b = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    b:SetSize(54, 24)
+    if i == 1 then
+        b:SetPoint("LEFT", selfBotUI.label, "RIGHT", 8, 0)
+    else
+        b:SetPoint("LEFT", selfBotUI.btns[i - 1], "RIGHT", 2, 0)
+    end
+    DCBind(b, seg.label)
+    b:SetScript("OnClick", function() SendDcCommand("selfbot", seg.key) end)
+    b:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(DCL(seg.label))
+        GameTooltip:AddLine(DCL(seg.tip), 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    selfBotUI.btns[i] = b
+end
+
+selfBotUI.update = function()
+    for i, seg in ipairs(SELFBOT_SEGS) do
+        local b = selfBotUI.btns[i]
+        local active = (seg.key == "off" and selfBotUI.role == nil) or seg.key == selfBotUI.role
+        if active then b:LockHighlight() else b:UnlockHighlight() end
+    end
+end
+selfBotUI.update()
+
+selfBotUI.show = function(shown)
+    selfBotUI.label[shown and "Show" or "Hide"](selfBotUI.label)
+    for _, b in ipairs(selfBotUI.btns) do b[shown and "Show" or "Hide"](b) end
+end
+
 -- Boss List Label
 local listLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
--- Below the pull + spectate rows: onBtn bottom, minus the 8px gap + 24px
--- segment row + 8px gap + 24px spectate row + 12px.
-listLabel:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 0, -76)
+-- Below the pull + spectate + auto-play rows: onBtn bottom, minus three
+-- (8px gap + 24px row) bands + 12px.
+listLabel:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 0, -108)
 DCBind(listLabel, "Dungeon Bosses")
 listLabel:SetTextColor(0.24, 0.60, 1.0)
 
@@ -1373,10 +1424,10 @@ end
 
 -- The stack hanging off the action row's bottom, read from the anchors that
 -- actually place it rather than baked into the height constants:
---   76   onBtn bottom -> boss-list caption top (the pull row + the spectate row)
+--   108  onBtn bottom -> boss-list caption top (pull, spectate, auto-play rows)
 --   +    the caption's own height
 --   4    caption -> list container, then the 205px container itself
-local LIST_GAP, LIST_PAD, LIST_H, TOGGLE_H = 76, 4, 205, 24
+local LIST_GAP, LIST_PAD, LIST_H, TOGGLE_H = 108, 4, 205, 24
 
 local function BelowActionRow()
     local capH = listLabel:GetHeight()
@@ -1426,6 +1477,7 @@ UpdateLayout = function()
         if spectatePrevBtn then spectatePrevBtn:Hide() end
         if spectateNextBtn then spectateNextBtn:Hide() end
         if spectateResetBtn then spectateResetBtn:Hide() end
+        if selfBotUI then selfBotUI.show(false) end
         listLabel:Hide()
         toggleBossesBtn:Hide()
         scrollContainer:Hide()
@@ -1460,6 +1512,7 @@ UpdateLayout = function()
         if spectatePrevBtn then spectatePrevBtn:Show() end
         if spectateNextBtn then spectateNextBtn:Show() end
         if spectateResetBtn then spectateResetBtn:Show() end
+        if selfBotUI then selfBotUI.show(true) end
         listLabel:Show()
         toggleBossesBtn:Show()
         statusFrame:Show()
@@ -1666,6 +1719,34 @@ local function OnAddonMessage(prefix, message, channel, sender)
         -- can't run into a refusal. Sent in answer to our status poll.
         spectateAvailable = (parts[2] ~= "0")
         if ApplySpectateAvailability then ApplySpectateAvailability() end
+    elseif parts[1] == "SELFBOT" then
+        -- Self-bot state for the auto-play row: "1 <role>" or "0".
+        local was = selfBotUI and selfBotUI.role
+        local now = nil
+        if parts[2] == "1" then
+            now = (parts[3] and parts[3] ~= "") and parts[3] or "dps"
+        end
+        if selfBotUI then
+            selfBotUI.role = now
+            selfBotUI.update()
+        end
+        if was ~= now then
+            if now then
+                local roleText = ({ tank = "Tank", heal = "Heal", dps = "DPS" })[now] or now
+                DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC] " .. DCL("Auto-play on:") .. " " .. DCL(roleText) .. "|r")
+            elseif was then
+                DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC] " .. DCL("Auto-play off: you are in control.") .. "|r")
+            end
+        end
+    elseif parts[1] == "SELFBOT_MSG" then
+        local kind = parts[2]
+        if kind == "fail" then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[DC] " .. DCL("Auto-play could not start:") .. " " .. (parts[3] or "") .. "|r")
+        elseif kind == "no-class-ai" then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00[DC] " .. DCL("This class has no bot AI yet: your character follows the run, dodges ground effects and attacks, but casts no class spells.") .. "|r")
+        elseif kind == "role-unsupported" then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00[DC] " .. DCL("This class cannot play that role for the bot AI; it plays by its talents instead.") .. "|r")
+        end
     elseif parts[1] == "SYNCEND" then
         if OnSettingsSyncBoundary then OnSettingsSyncBoundary("end") end
     elseif parts[1] == "CHAT" then
