@@ -8,6 +8,7 @@ local AddonName = "DungeonClear"
 if not DCLoc or not DCBind then
     local function same(s) return s end
     DCL, DCLDetail, DCLName, DCLNote = same, same, same, same
+    DCLDungeon, DCLTestLine = same, same
     function DCBind(widget, en) widget:SetText(en) end
     function DCBindPair(widget, en) widget:SetText(en) end
     DCLoc = {
@@ -781,7 +782,7 @@ DCBind(spectateResetBtn, "Reset Camera")
 -- Greyed out whenever no camera is running, so the button can only ever end one.
 UpdateResetBtnState = function()
     if not spectateResetBtn then return end
-    if spectateAvailable ~= false and cameraState ~= false then
+    if spectateAvailable ~= false and (cameraState ~= false or DCTestWatchActive) then
         spectateResetBtn:Enable()
     else
         spectateResetBtn:Disable()
@@ -815,6 +816,15 @@ spectateResetBtn:SetScript("OnClick", function()
     -- character, and never takes it away. With nothing running there is nothing
     -- to end, and a toggle here would START a camera -- so it does nothing at
     -- all. Same rule the greying-out uses, belt and braces.
+    -- DCTEST4C: while watching a bot test run, "reset" means end the watch: it puts
+    -- you back where you were and visible again. Ending only the camera left your
+    -- character standing at the test instance's entrance.
+    if DCTestWatchActive then
+        DCTestWatchActive = false
+        SetCameraState(false)
+        SendChatMessage(".dc test watch off", "SAY")
+        return
+    end
     if cameraState == false then return end
 
     -- Only the follow cam needs the follow-up; from the free camera a second
@@ -1381,6 +1391,1725 @@ end)
 langBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 DCLoc.AddButton(langBtn)
 
+-- Test window (RebornWOW DCTEST1A): the `.dc test` GM commands behind buttons.
+-- Start a bot test run (a random playerbot comp, or a hand-picked party of your own
+-- offline characters), then watch, inspect and stop runs. The commands are typed for
+-- you as chat commands (GM accounts only) and the server's replies are shown in the
+-- window as well as in chat. Only the header button is shared with the main chunk.
+local testBtn = CreateFrame("Button", "DungeonClearTestButton", frame, "UIPanelButtonTemplate")
+testBtn:SetSize(44, 20)
+testBtn:SetPoint("RIGHT", langBtn, "LEFT", -2, 0)
+DCBind(testBtn, "Test")
+-- A function rather than a do-block: its locals then count against its own 200-local
+-- limit instead of the main chunk's, which this file is close to.
+;(function()
+    local QUALITIES = {
+        { key = "",         label = "Default" },
+        { key = "uncommon", label = "Uncommon" },
+        { key = "rare",     label = "Rare" },
+        { key = "epic",     label = "Epic" },
+    }
+    local ROSTER_ROLES = { "Tank", "Healer", "DPS 1", "DPS 2", "DPS 3" }
+
+    local function DB()
+        DungeonClearDB.test = DungeonClearDB.test or {}
+        local t = DungeonClearDB.test
+        t.roster = t.roster or {}
+        t.dungeons = t.dungeons or {}
+        if t.mode == nil then t.mode = "random" end
+        if t.quality == nil then t.quality = 1 end
+        if t.autoWatch == nil then t.autoWatch = true end
+        return t
+    end
+
+    local tf = CreateFrame("Frame", "DungeonClearTestFrame", UIParent)
+    tf:SetSize(372, 590)
+    tf:SetPoint("CENTER", UIParent, "CENTER", 260, 0)
+    tf:SetMovable(true)
+    tf:EnableMouse(true)
+    tf:RegisterForDrag("LeftButton")
+    tf:SetClampedToScreen(true)
+    tf:SetFrameStrata("DIALOG")
+    tf:SetToplevel(true)
+    tf:SetScript("OnDragStart", tf.StartMoving)
+    tf:SetScript("OnDragStop", tf.StopMovingOrSizing)
+    tf:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    tf:SetBackdropColor(0.03, 0.03, 0.05, 0.92)
+    tf:SetBackdropBorderColor(0.20, 0.22, 0.28, 1.0)
+    tf:Hide()
+    tinsert(UISpecialFrames, "DungeonClearTestFrame")  -- Esc closes it
+
+    local title = tf:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, -12)
+    DCBind(title, "Bot Test Runs (GM)")
+    title:SetTextColor(0.24, 0.60, 1.0)
+    local tclose = CreateFrame("Button", nil, tf, "UIPanelCloseButton")
+    tclose:SetPoint("TOPRIGHT", tf, "TOPRIGHT", -4, -4)
+
+    local function Label(text, anchor, rel, x, y, color)
+        local fs = tf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        fs:SetPoint(anchor, rel, x and "BOTTOMLEFT" or anchor, x or 0, y or 0)
+        DCBind(fs, text)
+        if color then fs:SetTextColor(unpack(color)) else fs:SetTextColor(0.8, 0.8, 0.8) end
+        return fs
+    end
+
+    local function Tip(widget, head, body)
+        widget:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText(DCL(head))
+            if body then GameTooltip:AddLine(DCL(body), 1, 1, 1, true) end
+            GameTooltip:Show()
+        end)
+        widget:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+
+    local function Button(text, w, onClick, tipBody)
+        local b = CreateFrame("Button", nil, tf, "UIPanelButtonTemplate")
+        b:SetSize(w, 22)
+        DCBind(b, text)
+        b:SetScript("OnClick", onClick)
+        if tipBody then Tip(b, text, tipBody) end
+        return b
+    end
+
+    local function EditBox(w, numeric)
+        local e = CreateFrame("EditBox", nil, tf, "InputBoxTemplate")
+        e:SetSize(w, 20)
+        e:SetAutoFocus(false)
+        if numeric then e:SetNumeric(true) end
+        e:SetScript("OnEscapePressed", e.ClearFocus)
+        e:SetScript("OnEnterPressed", e.ClearFocus)
+        return e
+    end
+
+    ---------------------------------------------------------------- output box
+    local out = CreateFrame("ScrollingMessageFrame", nil, tf)
+    out:SetPoint("BOTTOMLEFT", tf, "BOTTOMLEFT", 12, 12)
+    out:SetPoint("BOTTOMRIGHT", tf, "BOTTOMRIGHT", -12, 12)
+    out:SetHeight(150)
+    out:SetFontObject(GameFontHighlightSmall)
+    out:SetJustifyH("LEFT")
+    out:SetFading(false)
+    out:SetMaxLines(300)
+    out:EnableMouseWheel(true)
+    out:SetScript("OnMouseWheel", function(self, delta)
+        if delta > 0 then self:ScrollUp() else self:ScrollDown() end
+    end)
+    local outBg = CreateFrame("Frame", nil, tf)
+    outBg:SetPoint("TOPLEFT", out, "TOPLEFT", -4, 4)
+    outBg:SetPoint("BOTTOMRIGHT", out, "BOTTOMRIGHT", 4, -4)
+    outBg:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 12, edgeSize = 12,
+        insets = { left = 3, right = 3, top = 3, bottom = 3 }
+    })
+    outBg:SetBackdropColor(0.10, 0.12, 0.16, 0.60)
+    outBg:SetBackdropBorderColor(0.15, 0.17, 0.22, 0.8)
+    outBg:SetFrameLevel(out:GetFrameLevel())
+    out:SetFrameLevel(outBg:GetFrameLevel() + 1)
+
+    ---------------------------------------------------- sending + capturing
+    -- Replies to a command arrive as system messages. Everything the server says
+    -- for a few seconds after a command is copied into the output box; a quiet
+    -- (auto-refresh) poll is also kept out of the chat window.
+    local capture = { untilT = 0, quiet = false, list = false }
+    local listBuf = nil
+
+    local function Send(cmd, quiet, isList)
+        capture.untilT = GetTime() + 4
+        capture.quiet = quiet and true or false
+        capture.list = isList and true or false
+        if isList then listBuf = {} end
+        if not quiet then out:AddMessage("|cff3da6ff> " .. cmd .. "|r") end
+        -- DCTEST4C: remember whether a test is being watched, so ending the camera
+        -- (here or with the main panel's Reset Camera) also takes you back.
+        if cmd:find("^%.dc test watch") then
+            DCTestWatchActive = not cmd:find(" off$")
+            SetCameraState(DCTestWatchActive and "follow" or false)
+        end
+        SendChatMessage(cmd, "SAY")
+    end
+
+    local function Capturing() return GetTime() < capture.untilT end
+    local watchAt = nil  -- pending auto-watch after a start
+
+    local RefreshDungeonList  -- forward
+
+    local capFrame = CreateFrame("Frame")
+    capFrame:RegisterEvent("CHAT_MSG_SYSTEM")
+    capFrame:SetScript("OnEvent", function(_, _, msg)
+        if not Capturing() or not msg then return end
+        capture.untilT = math.max(capture.untilT, GetTime() + 1.5)
+        out:AddMessage(DCLTestLine(msg))
+        -- DCTEST3A: the concurrent-run cap deserves more than a chat line.
+        local cap = msg:match("max concurrent test runs reached %((%d+)%)")
+        if cap then StaticPopup_Show("DUNGEONCLEAR_TEST_CAP", string.format(DCL(
+            "The test-run limit is %s at a time. Stop a running test first, or raise the limit with + at the top of the test run list (until restart), or in mod_dungeon_clear.conf (DungeonClear.TestRun.MaxConcurrent, then .reload config)."), cap)) end
+        if capture.list and listBuf then
+            -- "  hos              Halls of Stone (map 599, level 78, heroic 80)"
+            local token, name, lvl, rest = msg:match("^%s+(%S+)%s+(.-) %(map %d+, level (%d+)(.-)%)%s*$")
+            if token then
+                local heroic = rest and rest:match("heroic (%d+)")
+                listBuf[#listBuf + 1] = { token = token, name = name, level = tonumber(lvl),
+                                          heroic = heroic and tonumber(heroic) or nil }
+                DB().dungeons = listBuf
+                if RefreshDungeonList then RefreshDungeonList() end
+            end
+        end
+    end)
+    ChatFrame_AddMessageEventFilter("CHAT_MSG_SYSTEM", function()
+        return Capturing() and capture.quiet
+    end)
+
+    ----------------------------------------------------------- dungeon picker
+    local y = -40
+    local dLabel = tf:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    dLabel:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, y)
+    DCBind(dLabel, "Dungeon:")
+    local dungeonBox = EditBox(110)
+    dungeonBox:SetPoint("LEFT", dLabel, "RIGHT", 10, 0)
+    Tip(dungeonBox, "Dungeon:", "A dungeon token (e.g. hos) or a map id. Typing also filters the list below.")
+    local refreshBtn = Button("Load list", 80, function() Send(".dc test list", true, true) end,
+        "Ask the server for the dungeons the test harness supports.")
+    refreshBtn:SetPoint("LEFT", dungeonBox, "RIGHT", 8, 0)
+
+    local ROWS, ROW_H = 6, 16
+    local listBox = CreateFrame("Frame", nil, tf)
+    listBox:SetPoint("TOPLEFT", tf, "TOPLEFT", 12, y - 24)
+    listBox:SetSize(348, ROWS * ROW_H + 8)
+    listBox:SetBackdrop(outBg:GetBackdrop())
+    listBox:SetBackdropColor(0.10, 0.12, 0.16, 0.60)
+    listBox:SetBackdropBorderColor(0.15, 0.17, 0.22, 0.8)
+    listBox:EnableMouseWheel(true)
+    local listOffset = 0
+    local revealSelection = false  -- scroll the chosen dungeon into view on the next redraw
+    local listRows = {}
+    local filtered = {}
+
+    for i = 1, ROWS do
+        local r = CreateFrame("Button", nil, listBox)
+        r:SetSize(318, ROW_H)
+        r:SetPoint("TOPLEFT", listBox, "TOPLEFT", 6, -4 - (i - 1) * ROW_H)
+        r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.text:SetAllPoints()
+        r.text:SetJustifyH("LEFT")
+        r:SetScript("OnClick", function(self)
+            if self.row then
+                dungeonBox:SetText(self.row.token)
+                dungeonBox:ClearFocus()
+                DB().token = self.row.token
+                RefreshDungeonList()
+            end
+        end)
+        listRows[i] = r
+    end
+
+    -- DCTEST4D: a scroll bar beside the dungeon list (arrows + draggable thumb), kept in
+    -- step with the mouse wheel.
+    local scrollUp = CreateFrame("Button", nil, listBox, "UIPanelScrollUpButtonTemplate")
+    scrollUp:SetSize(16, 16)
+    scrollUp:SetPoint("TOPRIGHT", listBox, "TOPRIGHT", -4, -4)
+    local scrollDown = CreateFrame("Button", nil, listBox, "UIPanelScrollDownButtonTemplate")
+    scrollDown:SetSize(16, 16)
+    scrollDown:SetPoint("BOTTOMRIGHT", listBox, "BOTTOMRIGHT", -4, 4)
+    local scrollBar = CreateFrame("Slider", nil, listBox)
+    scrollBar:SetOrientation("VERTICAL")
+    scrollBar:SetWidth(16)
+    scrollBar:SetPoint("TOP", scrollUp, "BOTTOM", 0, 0)
+    scrollBar:SetPoint("BOTTOM", scrollDown, "TOP", 0, 0)
+    scrollBar:SetThumbTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
+    local track = scrollBar:CreateTexture(nil, "BACKGROUND")
+    track:SetAllPoints()
+    track:SetTexture(0, 0, 0, 0.35)
+    scrollBar:SetValueStep(1)
+    scrollBar:SetMinMaxValues(0, 0)
+    scrollBar:SetValue(0)
+    local syncingBar = false
+    scrollBar:SetScript("OnValueChanged", function(_, value)
+        if syncingBar then return end
+        local v = math.floor(value + 0.5)
+        if v ~= listOffset then
+            listOffset = v
+            RefreshDungeonList()
+        end
+    end)
+    scrollUp:SetScript("OnClick", function()
+        listOffset = math.max(0, listOffset - 1)
+        RefreshDungeonList()
+    end)
+    scrollDown:SetScript("OnClick", function()
+        listOffset = listOffset + 1
+        RefreshDungeonList()
+    end)
+
+    RefreshDungeonList = function()
+        local t = DB()
+        local q = (dungeonBox:GetText() or ""):lower()
+        wipe(filtered)
+        for _, row in ipairs(t.dungeons) do
+            if q == "" or row.token:lower():find(q, 1, true) or row.name:lower():find(q, 1, true)
+               or DCLDungeon(row.name):find(q, 1, true)
+               or row.token == t.token then
+                filtered[#filtered + 1] = row
+            end
+        end
+        -- An exact token match shows the whole list (a chosen dungeon, not a search).
+        for _, row in ipairs(t.dungeons) do
+            if row.token == q then wipe(filtered); for _, r2 in ipairs(t.dungeons) do filtered[#filtered + 1] = r2 end break end
+        end
+        -- A chosen dungeon (an exact token) shows the whole list; keep it in sight, centred,
+        -- instead of jumping back to the top. Only right after a choice, so the mouse wheel
+        -- still scrolls freely.
+        if revealSelection then
+            revealSelection = false
+            for i, row in ipairs(filtered) do
+                if row.token == q and (i <= listOffset or i > listOffset + ROWS) then
+                    listOffset = i - math.floor(ROWS / 2) - 1
+                end
+            end
+        end
+        listOffset = math.max(0, math.min(listOffset, #filtered - ROWS))
+        local maxOffset = math.max(0, #filtered - ROWS)
+        syncingBar = true
+        scrollBar:SetMinMaxValues(0, maxOffset)
+        scrollBar:SetValue(listOffset)
+        syncingBar = false
+        if maxOffset > 0 then
+            scrollBar:Show(); scrollUp:Show(); scrollDown:Show()
+            if listOffset > 0 then scrollUp:Enable() else scrollUp:Disable() end
+            if listOffset < maxOffset then scrollDown:Enable() else scrollDown:Disable() end
+        else
+            scrollBar:Hide(); scrollUp:Hide(); scrollDown:Hide()
+        end
+        for i = 1, ROWS do
+            local r = listRows[i]
+            local row = filtered[i + listOffset]
+            r.row = row
+            if row then
+                local lv = DCL("Lv") .. " " .. row.level
+                if row.heroic then lv = lv .. " / " .. DCL("H") .. " " .. row.heroic end
+                local mark = (row.token == q) and "|cff00ff00> |r" or "  "
+                r.text:SetText(mark .. "|cffffd100" .. row.token .. "|r  " .. DCLDungeon(row.name) .. "  |cff999999(" .. lv .. ")|r")
+                r:Show()
+            else
+                r:Hide()
+            end
+        end
+        if #t.dungeons == 0 then
+            listRows[1].text:SetText("|cff999999" .. DCL("Click Load list to fetch the dungeons.") .. "|r")
+            listRows[1].row = nil
+            listRows[1]:Show()
+        end
+    end
+    listBox:SetScript("OnMouseWheel", function(_, delta)
+        listOffset = listOffset - delta
+        RefreshDungeonList()
+    end)
+    dungeonBox:SetScript("OnTextChanged", function(self)
+        DB().token = self:GetText()
+        listOffset = 0
+        revealSelection = true
+        RefreshDungeonList()
+    end)
+
+    -------------------------------------------------------------- run options
+    y = y - 24 - (ROWS * ROW_H + 8) - 10
+    local heroicCheck = CreateFrame("CheckButton", nil, tf, "UICheckButtonTemplate")
+    heroicCheck:SetSize(24, 24)
+    heroicCheck:SetPoint("TOPLEFT", tf, "TOPLEFT", 10, y)
+    local heroicText = heroicCheck:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    heroicText:SetPoint("LEFT", heroicCheck, "RIGHT", 0, 1)
+    DCBind(heroicText, "Heroic")
+    heroicCheck:SetScript("OnClick", function(self) DB().heroic = self:GetChecked() and true or false end)
+
+    local modeLabel = tf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    modeLabel:SetPoint("LEFT", heroicText, "RIGHT", 18, 0)
+    DCBind(modeLabel, "Party:")
+    local modeBtns = {}
+    local ApplyMode  -- forward
+    local MODES = {
+        { key = "random", label = "Random bots",
+          tip = "The server rolls a random playerbot party from the bot pool and gears it to the ilvl / quality below. Same seed = same party." },
+        { key = "roster", label = "My characters",
+          tip = "A party of your own characters, roles in order. They must be OFFLINE (log your bot alts out first): the server logs them in as bots and does not re-gear or re-level them. The character you are playing cannot join a test run - play it with the normal Start button and Auto-play instead." },
+    }
+    for i, m in ipairs(MODES) do
+        local b = Button(m.label, 96, function() DB().mode = m.key; ApplyMode() end, m.tip)
+        if i == 1 then b:SetPoint("LEFT", modeLabel, "RIGHT", 6, 0)
+        else b:SetPoint("LEFT", modeBtns[i - 1], "RIGHT", 2, 0) end
+        b.key = m.key
+        modeBtns[i] = b
+    end
+
+    -- random-comp options
+    y = y - 30
+    local randomGroup = {}
+    local ilvlLabel = tf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    ilvlLabel:SetPoint("TOPLEFT", tf, "TOPLEFT", 16, y - 4)
+    DCBind(ilvlLabel, "Item level:")
+    local ilvlBox = EditBox(40, true)
+    ilvlBox:SetPoint("LEFT", ilvlLabel, "RIGHT", 8, 0)
+    Tip(ilvlBox, "Item level:", "Gear ceiling for the bots (empty = the server default). Use 'Gear tiers' to see sensible values for the dungeon.")
+    local qLabel = tf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    qLabel:SetPoint("LEFT", ilvlBox, "RIGHT", 10, 0)
+    DCBind(qLabel, "Quality:")
+    local qBtn
+    qBtn = Button("Default", 70, function()
+        local t = DB()
+        t.quality = t.quality % #QUALITIES + 1
+        DCBind(qBtn, QUALITIES[t.quality].label)
+    end, "Click to cycle the best item quality the bots may wear.")
+    qBtn:SetPoint("LEFT", qLabel, "RIGHT", 6, 0)
+    local seedLabel = tf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    seedLabel:SetPoint("LEFT", qBtn, "RIGHT", 8, 0)
+    DCBind(seedLabel, "Seed:")
+    local seedBox = EditBox(56, true)
+    seedBox:SetPoint("LEFT", seedLabel, "RIGHT", 8, 0)
+    Tip(seedBox, "Seed:", "Empty = a new random party. Re-use the seed printed by an earlier run to test the very same party again.")
+    randomGroup = { ilvlLabel, ilvlBox, qLabel, qBtn, seedLabel, seedBox }
+
+    -- roster options: five name boxes, roles positional
+    local rosterGroup = {}
+    local rosterBoxes = {}
+    for i, role in ipairs(ROSTER_ROLES) do
+        local col, row = (i - 1) % 3, math.floor((i - 1) / 3)
+        local l = tf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        l:SetPoint("TOPLEFT", tf, "TOPLEFT", 16 + col * 116, y - 4 - row * 24)
+        DCBind(l, role)
+        local e = EditBox(68)
+        e:SetPoint("LEFT", l, "RIGHT", 6, 0)
+        e:SetScript("OnTextChanged", function(self) DB().roster[i] = self:GetText() end)
+        rosterBoxes[i] = e
+        rosterGroup[#rosterGroup + 1] = l
+        rosterGroup[#rosterGroup + 1] = e
+    end
+    local fillBtn = Button("From party", 80, function()
+        -- Party members other than you, in party order; they must log out before the run.
+        local n = GetNumPartyMembers and GetNumPartyMembers() or 0
+        local names = {}
+        for i = 1, n do
+            local name = UnitName("party" .. i)
+            if name then names[#names + 1] = name end
+        end
+        for i = 1, 5 do
+            rosterBoxes[i]:SetText(names[i] or "")
+        end
+    end, "Copy your current party members' names into the five slots (fix the role order by hand). Log those bots out before you start.")
+    fillBtn:SetPoint("TOPLEFT", tf, "TOPLEFT", 16 + 2 * 116, y - 26)
+    rosterGroup[#rosterGroup + 1] = fillBtn
+
+    ApplyMode = function()
+        local t = DB()
+        for _, b in ipairs(modeBtns) do
+            if b.key == t.mode then b:LockHighlight() else b:UnlockHighlight() end
+        end
+        for _, w in ipairs(randomGroup) do w[t.mode == "random" and "Show" or "Hide"](w) end
+        for _, w in ipairs(rosterGroup) do w[t.mode == "roster" and "Show" or "Hide"](w) end
+    end
+
+    ------------------------------------------------------------ start + gear
+    y = y - 54
+    local function Token()
+        local token = (dungeonBox:GetText() or ""):gsub("%s", "")
+        if token == "" then
+            out:AddMessage("|cffff3333" .. DCL("Pick a dungeon first.") .. "|r")
+            return nil
+        end
+        return token
+    end
+
+    local startBtn = Button("Start test", 100, function()
+        local token = Token()
+        if not token then return end
+        local t = DB()
+        local cmd = ".dc test start " .. token
+        if t.mode == "roster" then
+            local names = {}
+            for i = 1, 5 do
+                local nm = (rosterBoxes[i]:GetText() or ""):gsub("%s", "")
+                if nm == "" then
+                    out:AddMessage("|cffff3333" .. DCL("Fill all five characters (tank, healer, three DPS).") .. "|r")
+                    return
+                end
+                names[i] = nm
+            end
+            cmd = cmd .. " party=" .. table.concat(names, ",")
+        else
+            local ilvl = ilvlBox:GetText()
+            if ilvl and ilvl ~= "" then cmd = cmd .. " ilvl=" .. ilvl end
+            local q = QUALITIES[t.quality].key
+            if q ~= "" then cmd = cmd .. " quality=" .. q end
+            local seed = seedBox:GetText()
+            if seed and seed ~= "" then cmd = cmd .. " seed=" .. seed end
+        end
+        if heroicCheck:GetChecked() then cmd = cmd .. " heroic" end
+        t.ilvl, t.seed = ilvlBox:GetText(), seedBox:GetText()
+        Send(cmd)
+        if t.autoWatch then watchAt = GetTime() + 10 end
+    end, "Start a bot test run with the options above. The bots run the dungeon on their own; use Watch to follow them.")
+    startBtn:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, y)
+    local gearBtn = Button("Gear tiers", 90, function()
+        local token = Token()
+        if not token then return end
+        Send(".dc test gear " .. token .. (heroicCheck:GetChecked() and " heroic" or ""))
+    end, "List the item-level ceilings worth testing this dungeon at.")
+    gearBtn:SetPoint("LEFT", startBtn, "RIGHT", 4, 0)
+
+    -- Watch automatically once the bots have had time to log in and enter.
+    local watchCheck = CreateFrame("CheckButton", nil, tf, "UICheckButtonTemplate")
+    watchCheck:SetSize(24, 24)
+    watchCheck:SetPoint("LEFT", gearBtn, "RIGHT", 6, 0)
+    local watchText = watchCheck:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    watchText:SetPoint("LEFT", watchCheck, "RIGHT", 0, 1)
+    DCBind(watchText, "Watch after start")
+    watchCheck:SetScript("OnClick", function(self) DB().autoWatch = self:GetChecked() and true or false end)
+    Tip(watchCheck, "Watch after start", "10 seconds after Start, run Watch: you are hidden, moved to the instance entrance and your camera follows the bots.")
+
+    ------------------------------------------------------------- running runs
+    y = y - 32
+    local runLabel = tf:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    runLabel:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, y)
+    DCBind(runLabel, "Running tests")
+    runLabel:SetTextColor(0.24, 0.60, 1.0)
+
+    y = y - 18
+    local RUN_BTNS = {
+        { "Status",     ".dc test status",     "Show every running test run (dungeon, party, stage, time)." },
+        { "Watch",      ".dc test watch",      "Hide yourself and put your camera on the running test (only one running) - you are teleported to the instance entrance." },
+        { "Next run",   ".dc test watch next", "Move the camera to the next running test." },
+        { "Stop watching", ".dc test watch off", "End the camera and return to where you were." },
+    }
+    local prev
+    for i, def in ipairs(RUN_BTNS) do
+        local b = Button(def[1], i == 4 and 96 or 80, function() Send(def[2]) end, def[3])
+        if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0)
+        else b:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, y) end
+        prev = b
+    end
+
+    y = y - 26
+    local stopBtn = Button("Stop run", 80, function() Send(".dc test stop") end,
+        "Stop the running test (only one running; otherwise the reply lists the run ids).")
+    stopBtn:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, y)
+    local stopAllBtn = Button("Stop all", 80, function()
+        StaticPopup_Show("DUNGEONCLEAR_TEST_STOPALL")
+    end, "Stop every test run and every test plan.")
+    stopAllBtn:SetPoint("LEFT", stopBtn, "RIGHT", 4, 0)
+    local planBtn = Button("Plan status", 80, function() Send(".dc test plan status") end,
+        "Show the batch test plans (.dc test plan start ...) and their progress.")
+    planBtn:SetPoint("LEFT", stopAllBtn, "RIGHT", 4, 0)
+    local clearBtn = Button("Clear", 56, function() out:Clear() end)
+    clearBtn:SetPoint("LEFT", planBtn, "RIGHT", 4, 0)
+
+    StaticPopupDialogs["DUNGEONCLEAR_TEST_CAP"] = {
+        text = "%s",
+        button1 = OKAY, button2 = CANCEL,
+        OnShow = function(self)
+            self.button1:SetText(DCL("Open test run list"))
+            self.button2:SetText(OKAY)
+        end,
+        OnAccept = function() if DungeonClearTestListFrame then DungeonClearTestListFrame:Show() end end,
+        timeout = 0, whileDead = true, hideOnEscape = true,
+    }
+    StaticPopupDialogs["DUNGEONCLEAR_TEST_STOPONE"] = {
+        text = "%s",
+        button1 = YES, button2 = NO,
+        OnAccept = function(self, data) if data then data() end end,
+        timeout = 0, whileDead = true, hideOnEscape = true,
+    }
+    StaticPopupDialogs["DUNGEONCLEAR_TEST_STOPALL"] = {
+        text = "%s",
+        button1 = YES, button2 = NO,
+        OnShow = function(self) self.text:SetText(DCL("Stop ALL bot test runs and test plans?")) end,
+        OnAccept = function() Send(".dc test stop all") end,
+        timeout = 0, whileDead = true, hideOnEscape = true,
+    }
+
+    y = y - 26
+    local autoCheck = CreateFrame("CheckButton", nil, tf, "UICheckButtonTemplate")
+    autoCheck:SetSize(24, 24)
+    autoCheck:SetPoint("TOPLEFT", tf, "TOPLEFT", 10, y)
+    local autoText = autoCheck:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    autoText:SetPoint("LEFT", autoCheck, "RIGHT", 0, 1)
+    DCBind(autoText, "Refresh status every 15s while this window is open")
+    autoCheck:SetScript("OnClick", function(self) DB().auto = self:GetChecked() and true or false end)
+
+    local autoElapsed = 0
+    -- The pending auto-watch lives on its own frame so it fires with this window closed.
+    local watchTimer = CreateFrame("Frame")
+    watchTimer:SetScript("OnUpdate", function()
+        if watchAt and GetTime() >= watchAt then
+            watchAt = nil
+            Send(".dc test watch")
+        end
+    end)
+
+    tf:SetScript("OnUpdate", function(_, elapsed)
+        if not DB().auto then return end
+        autoElapsed = autoElapsed + elapsed
+        if autoElapsed >= 15 and not Capturing() then
+            autoElapsed = 0
+            out:AddMessage("|cff999999-- " .. date("%H:%M:%S") .. " --|r")
+            Send(".dc test status", true)
+        end
+    end)
+
+    local note = tf:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    note:SetPoint("BOTTOMLEFT", outBg, "TOPLEFT", 2, 4)
+    note:SetPoint("RIGHT", tf, "RIGHT", -14, 0)
+    note:SetJustifyH("LEFT")
+    DCBind(note, "GM only. Replies from the server:")
+
+    tf:SetScript("OnShow", function()
+        local t = DB()
+        dungeonBox:SetText(t.token or "")
+        heroicCheck:SetChecked(t.heroic and true or false)
+        ilvlBox:SetText(t.ilvl or "")
+        seedBox:SetText(t.seed or "")
+        DCBind(qBtn, QUALITIES[t.quality].label)
+        for i = 1, 5 do rosterBoxes[i]:SetText(t.roster[i] or "") end
+        autoCheck:SetChecked(t.auto and true or false)
+        watchCheck:SetChecked(t.autoWatch and true or false)
+        autoElapsed = 0
+        ApplyMode()
+        RefreshDungeonList()
+        if #t.dungeons == 0 then Send(".dc test list", true, true) end
+    end)
+
+    ------------------------------------------------ test-run list (DCTEST2A)
+    -- A panel beside the test window: every live run (the one you are watching
+    -- first) with a Watch button each, the selected run's party (class, role,
+    -- level, item level, health, mana) and one bot's equipped gear. Fed by the
+    -- server's "testruns" / "testgear" addon replies, refreshed every 5 seconds
+    -- while it is open.
+    local CLASS_TOKENS = { "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "DEATHKNIGHT",
+                           "SHAMAN", "MAGE", "WARLOCK", nil, "DRUID" }
+    local STAGES = {
+        spawning_bots = "Logging in bots", provisioning = "Gearing up", grouping = "Grouping",
+        teleporting = "Teleporting", starting = "Starting", monitoring = "Clearing",
+        tearing_down = "Wrapping up",
+    }
+    local ROLE_TAGS = { tank = "Tank", healer = "Heal", heal = "Heal", dps = "DPS" }
+
+    local lf = CreateFrame("Frame", "DungeonClearTestListFrame", UIParent)
+    lf:SetSize(392, 640)
+    lf:SetFrameStrata("DIALOG")
+    lf:EnableMouse(true)
+    -- Its own window: opens left of the test window (the main panel usually sits on
+    -- the right), drags on its own and remembers where it was put. Right-click puts
+    -- it back next to the test window.
+    lf:SetMovable(true)
+    lf:SetClampedToScreen(true)
+    lf:SetToplevel(true)
+    lf:RegisterForDrag("LeftButton")
+    local function PlaceList()
+        lf:ClearAllPoints()
+        local pos = DB().listPos
+        if pos then
+            lf:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4])
+        else
+            lf:SetPoint("TOPRIGHT", tf, "TOPLEFT", -4, 0)
+        end
+    end
+    lf:SetScript("OnDragStart", lf.StartMoving)
+    lf:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, relPoint, x, y = self:GetPoint(1)
+        DB().listPos = { point, relPoint, x, y }
+    end)
+    -- Right-click on the title area puts the panel back next to the test window
+    -- (right-clicks on a run or a bot open their own menus).
+    lf:SetScript("OnMouseUp", function(self, button)
+        if button == "RightButton" then
+            DB().listPos = nil
+            PlaceList()
+        end
+    end)
+    lf:SetBackdrop(tf:GetBackdrop())
+    lf:SetBackdropColor(0.03, 0.03, 0.05, 0.92)
+    lf:SetBackdropBorderColor(0.20, 0.22, 0.28, 1.0)
+    lf:Hide()
+    tinsert(UISpecialFrames, "DungeonClearTestListFrame")
+
+    local function LText(parent, font, text, x, y)
+        local fs = parent:CreateFontString(nil, "OVERLAY", font or "GameFontNormalSmall")
+        if x then fs:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y) end
+        if text then DCBind(fs, text) end
+        fs:SetJustifyH("LEFT")
+        return fs
+    end
+    local function LButton(parent, text, w, onClick)
+        local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+        b:SetSize(w, 20)
+        DCBind(b, text)
+        b:SetScript("OnClick", onClick)
+        return b
+    end
+    local function Panel(parent, x, y, w, h)
+        local p = CreateFrame("Frame", nil, parent)
+        p:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y)
+        p:SetSize(w, h)
+        p:SetBackdrop(outBg:GetBackdrop())
+        p:SetBackdropColor(0.10, 0.12, 0.16, 0.60)
+        p:SetBackdropBorderColor(0.15, 0.17, 0.22, 0.8)
+        return p
+    end
+
+    local lTitle = LText(lf, "GameFontNormalLarge", "Test run list", 14, -12)
+    lTitle:SetTextColor(0.24, 0.60, 1.0)
+    local lClose = CreateFrame("Button", nil, lf, "UIPanelCloseButton")
+    lClose:SetPoint("TOPRIGHT", lf, "TOPRIGHT", -4, -4)
+    local lCount = LText(lf, nil, nil, 14, -38)
+    local lHint = LText(lf, "GameFontDisableSmall", "Drag to move; right-click a run or a bot for more", 0, 0)
+    lHint:ClearAllPoints()
+    lHint:SetPoint("LEFT", lTitle, "RIGHT", 10, -1)
+    local lRefresh = LButton(lf, "Refresh", 64, function() SendDcCommand("testruns", "", true) end)
+    lRefresh:SetPoint("TOPRIGHT", lf, "TOPRIGHT", -14, -34)
+
+
+    local runs, selectedRun, runOffset = {}, nil, 0
+    local gear = nil   -- { name, class, level, ilvl, items = { {slot, id, ilvl, q} } }
+    local pending, gearPending = nil, nil
+    local info, infoPending = nil, nil   -- DCTEST3A run stats: { id, kills, deaths }
+    local bottomMode = "gear"            -- what the bottom box shows: "gear" | "stats"
+    local pendingFollow = nil            -- { name, at }: follow a bot once the watch has landed
+
+    -- DCTEST4A: the concurrent-run cap, settable here (GM; in memory until restart).
+    local cap = { value = nil, conf = 0, over = false }  -- DCTEST4A concurrent-run cap
+    local function SetCap(v)
+        SendDcCommand("testcap", tostring(v), true)
+    end
+    local capReset = LButton(lf, "Conf", 44, function() SendDcCommand("testcap", "reset", true) end)
+    capReset:SetPoint("RIGHT", lRefresh, "LEFT", -6, 0)
+    local capPlus = LButton(lf, "+", 22, function()
+        if cap.value and cap.value > 0 and cap.value < 100 then SetCap(cap.value + 1) end
+    end)
+    capPlus:SetPoint("RIGHT", capReset, "LEFT", -4, 0)
+    local capMinus = LButton(lf, "-", 22, function()
+        if not cap.value then return end
+        if cap.value == 0 then SetCap(math.max(#runs, 1)) elseif cap.value > 1 then SetCap(cap.value - 1) end
+    end)
+    capMinus:SetPoint("RIGHT", capPlus, "LEFT", -2, 0)
+    for _, b in ipairs({ capMinus, capPlus, capReset }) do
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText(DCL("Test-run limit"))
+            GameTooltip:AddLine(DCL("- / + change how many tests may run at once. Conf goes back to DungeonClear.TestRun.MaxConcurrent. A value set here lasts until the server restarts; edit the conf to keep it."), 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+
+    -- runs ---------------------------------------------------------------
+    local RUN_ROWS, RUN_H = 5, 40
+    local runBox = Panel(lf, 10, -58, 372, RUN_ROWS * RUN_H + 8)
+    local VIEW_H = 28  -- DCTEST4C: the camera row under the runs
+    runBox:EnableMouseWheel(true)
+    local runRows = {}
+    local RenderRuns, RenderMembers, RenderGear  -- forward
+
+    for i = 1, RUN_ROWS do
+        local r = CreateFrame("Button", nil, runBox)
+        r:SetSize(362, RUN_H - 2)
+        r:SetPoint("TOPLEFT", runBox, "TOPLEFT", 5, -4 - (i - 1) * RUN_H)
+        r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        r.l1 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.l1:SetPoint("TOPLEFT", r, "TOPLEFT", 2, -3)
+        r.l1:SetPoint("RIGHT", r, "RIGHT", -64, 0)
+        r.l1:SetJustifyH("LEFT")
+        r.l2 = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        r.l2:SetPoint("TOPLEFT", r.l1, "BOTTOMLEFT", 0, -3)
+        r.l2:SetPoint("RIGHT", r, "RIGHT", -64, 0)
+        r.l2:SetJustifyH("LEFT")
+        r.watch = CreateFrame("Button", nil, r, "UIPanelButtonTemplate")
+        r.watch:SetSize(58, 20)
+        r.watch:SetPoint("RIGHT", r, "RIGHT", -2, 0)
+        r.watch:SetScript("OnClick", function(self)
+            local run = self:GetParent().run
+            if not run then return end
+            selectedRun = run.id
+            Send(".dc test watch " .. run.id)
+            -- The camera lands after the teleport; ask again so the marker follows.
+            capture.relistAt = GetTime() + 4
+            RenderRuns()
+        end)
+        r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        r:SetScript("OnClick", function(self, button)
+            if self.run then
+                selectedRun = self.run.id
+                gear = nil
+                RenderRuns()
+                if button == "RightButton" and DCTestShowRunMenu then DCTestShowRunMenu(self.run) end
+            end
+        end)
+        runRows[i] = r
+    end
+    runBox:SetScript("OnMouseWheel", function(_, delta)
+        runOffset = math.max(0, math.min(runOffset - delta, #runs - RUN_ROWS))
+        RenderRuns()
+    end)
+
+    local function DungeonName(token)
+        for _, row in ipairs(DB().dungeons) do
+            if row.token == token then return DCLDungeon(row.name) end
+        end
+        return token
+    end
+    local function Clock(s)
+        s = tonumber(s) or 0
+        return string.format("%d:%02d", math.floor(s / 60), s % 60)
+    end
+
+    -- members --------------------------------------------------------------
+    local memLabel = LText(lf, "GameFontNormal", nil, 14, -58 - RUN_ROWS * RUN_H - 16 - VIEW_H)
+    memLabel:SetTextColor(0.24, 0.60, 1.0)
+    local MEM_ROWS, MEM_H = 5, 20
+    local memBox = Panel(lf, 10, -58 - RUN_ROWS * RUN_H - 32 - VIEW_H, 372, MEM_ROWS * MEM_H + 8)
+    local memRows = {}
+    for i = 1, MEM_ROWS do
+        local r = CreateFrame("Frame", nil, memBox)
+        r:SetSize(362, MEM_H)
+        r:SetPoint("TOPLEFT", memBox, "TOPLEFT", 5, -4 - (i - 1) * MEM_H)
+        r.cls = r:CreateTexture(nil, "ARTWORK")
+        r.cls:SetSize(16, 16)
+        r.cls:SetPoint("LEFT", r, "LEFT", 1, 0)
+        r.cls:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
+        r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.text:SetPoint("LEFT", r.cls, "RIGHT", 4, 0)
+        r.text:SetPoint("RIGHT", r, "RIGHT", -56, 0)
+        r.text:SetJustifyH("LEFT")
+        r.gearBtn = CreateFrame("Button", nil, r, "UIPanelButtonTemplate")
+        r.gearBtn:SetSize(52, 18)
+        r.gearBtn:SetPoint("RIGHT", r, "RIGHT", -2, 0)
+        DCBind(r.gearBtn, "Details")
+        r.gearBtn:SetScript("OnClick", function(self)
+            local m = self:GetParent().member
+            if m and DCTestInspect then DCTestInspect(m.name) end
+        end)
+        r:EnableMouse(true)
+        r:SetScript("OnMouseUp", function(self, button)
+            if button == "RightButton" and self.member and DCTestShowMemberMenu then DCTestShowMemberMenu(self.member) end
+        end)
+        memRows[i] = r
+    end
+
+    -- gear -----------------------------------------------------------------
+    local gearTop = -58 - RUN_ROWS * RUN_H - 32 - VIEW_H - (MEM_ROWS * MEM_H + 8) - 8
+    local gearLabel = LText(lf, "GameFontNormal", nil, 14, gearTop)
+    gearLabel:SetTextColor(0.24, 0.60, 1.0)
+    local GEAR_ROWS, GEAR_H = 10, 17
+    local gearBox = Panel(lf, 10, gearTop - 16, 372, GEAR_ROWS * GEAR_H + 8)
+    local gearCells = {}
+    for i = 1, GEAR_ROWS * 2 do
+        local col, row = math.floor((i - 1) / GEAR_ROWS), (i - 1) % GEAR_ROWS
+        local c = CreateFrame("Button", nil, gearBox)
+        c:SetSize(180, GEAR_H)
+        c:SetPoint("TOPLEFT", gearBox, "TOPLEFT", 5 + col * 182, -4 - row * GEAR_H)
+        c.icon = c:CreateTexture(nil, "ARTWORK")
+        c.icon:SetSize(GEAR_H - 2, GEAR_H - 2)
+        c.icon:SetPoint("LEFT", c, "LEFT", 0, 0)
+        c.text = c:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        c.text:SetPoint("LEFT", c.icon, "RIGHT", 3, 0)
+        c.text:SetPoint("RIGHT", c, "RIGHT", 0, 0)
+        c.text:SetJustifyH("LEFT")
+        c:SetScript("OnEnter", function(self)
+            if not self.itemId then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink("item:" .. self.itemId)
+            GameTooltip:Show()
+        end)
+        c:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        gearCells[i] = c
+    end
+    gearBox:Hide()
+
+    -- Run stats share the bottom box with the gear list (DCTEST3A).
+    local statsBox = CreateFrame("ScrollingMessageFrame", nil, lf)
+    statsBox:SetPoint("TOPLEFT", gearBox, "TOPLEFT", 6, -4)
+    statsBox:SetPoint("BOTTOMRIGHT", gearBox, "BOTTOMRIGHT", -6, 4)
+    statsBox:SetFontObject(GameFontHighlightSmall)
+    statsBox:SetJustifyH("LEFT")
+    statsBox:SetFading(false)
+    statsBox:SetMaxLines(200)
+    statsBox:SetInsertMode("TOP")
+    statsBox:EnableMouseWheel(true)
+    statsBox:SetScript("OnMouseWheel", function(self, delta)
+        if delta > 0 then self:ScrollUp() else self:ScrollDown() end
+    end)
+    statsBox:Hide()
+
+    local QUALITY_NAMES = { [1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic", [5] = "Legendary" }
+    local function FindRun(id)
+        for _, r in ipairs(runs) do if r.id == id then return r end end
+    end
+
+    local function RenderStats()
+        local run = info and FindRun(info.id)
+        gearBox:Show()
+        for _, c in ipairs(gearCells) do c:Hide() end
+        statsBox:Show()
+        statsBox:Clear()
+        if not info then return end
+        local name = run and DungeonName(run.token) or info.id
+        gearLabel:SetText(DCL("Run stats") .. ": " .. name)
+        -- Inserted at the TOP, so add the lines bottom-up.
+        local lines = {}
+        if run then
+            local q = QUALITY_NAMES[run.gearQuality]
+            lines[#lines + 1] = string.format("%s %d/%d   %s %d   %s %d   %s %s",
+                DCL("Bosses"), run.killed, run.total, DCL("Deaths"), run.deaths or 0,
+                DCL("Pulls"), run.pulls or 0, DCL("Time"), Clock(run.elapsed))
+            lines[#lines + 1] = string.format("%s %s   %s %s %s",
+                DCL("Seed:"), run.roster and DCL("(my characters)") or tostring(run.seed),
+                DCL("Gear"), (run.gearIlvl or 0) > 0 and ("<=" .. run.gearIlvl) or DCL("unlimited"),
+                q and DCL(q) or "")
+        end
+        lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Bosses down") .. " --|r"
+        if #info.kills == 0 then lines[#lines + 1] = "  |cff999999" .. DCL("none yet") .. "|r" end
+        for _, k in ipairs(info.kills) do
+            lines[#lines + 1] = "  " .. Clock(k.t) .. "  |cff00ff00" .. k.name .. "|r"
+        end
+        lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Deaths") .. " --|r"
+        if #info.deaths == 0 then lines[#lines + 1] = "  |cff999999" .. DCL("none yet") .. "|r" end
+        for _, dd in ipairs(info.deaths) do
+            local by = dd.by ~= "" and (" <- " .. dd.by .. (dd.onBoss and (" |cffff8000(" .. DCL("boss") .. ")|r") or "")) or (" |cff999999(" .. DCL("out of combat") .. ")|r")
+            lines[#lines + 1] = "  " .. Clock(dd.t) .. "  |cffff3333" .. dd.name .. "|r" .. by
+        end
+        for i = #lines, 1, -1 do statsBox:AddMessage(lines[i]) end
+    end
+
+    local runMenuFrame = CreateFrame("Frame", "DungeonClearTestRunMenu", UIParent, "UIDropDownMenuTemplate")
+
+    -- The same test again: same dungeon, difficulty, seed (= same party) and gear.
+    local function ReplayCommand(run)
+        local cmd = ".dc test start " .. run.token
+        if run.seed and run.seed > 0 then cmd = cmd .. " seed=" .. run.seed end
+        if run.gearIlvl and run.gearIlvl > 0 then cmd = cmd .. " ilvl=" .. run.gearIlvl end
+        local qkey = ({ [2] = "uncommon", [3] = "rare", [4] = "epic", [5] = "legendary" })[run.gearQuality or 0]
+        if qkey then cmd = cmd .. " quality=" .. qkey end
+        if run.heroic then cmd = cmd .. " heroic" end
+        return cmd
+    end
+
+    local function FollowBot(run, name)
+        if run.watching then
+            Send(".dc spectate follow " .. name)
+        else
+            Send(".dc test watch " .. run.id)
+            pendingFollow = { name = name, at = GetTime() + 6 }
+            capture.relistAt = GetTime() + 4
+        end
+    end
+
+    function DCTestShowRunMenu(run)
+        local follow = {}
+        for _, m in ipairs(run.members) do
+            follow[#follow + 1] = { text = m.name, notCheckable = true,
+                                    func = function() CloseDropDownMenus(); FollowBot(run, m.name) end }
+        end
+        local menu = {
+            { text = DungeonName(run.token) .. (run.heroic and (" " .. DCL("(Heroic)")) or ""), isTitle = true, notCheckable = true },
+            { text = DCL("Watch this run"), notCheckable = true, disabled = run.watching,
+              func = function() Send(".dc test watch " .. run.id); capture.relistAt = GetTime() + 4 end },
+            { text = DCL("Follow a bot"), notCheckable = true, hasArrow = true, menuList = follow,
+              disabled = #follow == 0 },
+            { text = DCL("Run stats"), notCheckable = true,
+              func = function() SendDcCommand("testinfo", run.id, true) end },
+            { text = DCL("Run it again (same seed and gear)"), notCheckable = true, disabled = run.roster,
+              func = function() Send(ReplayCommand(run)) end },
+            { text = DCL("Copy its settings to the left"), notCheckable = true, func = function()
+                local t = DB()
+                t.token, t.heroic, t.mode = run.token, run.heroic, "random"
+                t.ilvl = (run.gearIlvl or 0) > 0 and tostring(run.gearIlvl) or ""
+                t.seed = (run.seed or 0) > 0 and tostring(run.seed) or ""
+                t.quality = ({ [2] = 2, [3] = 3, [4] = 4 })[run.gearQuality or 0] or 1
+                tf:Hide(); tf:Show()
+            end },
+            { text = "|cffff3333" .. DCL("Stop this test") .. "|r", notCheckable = true, func = function()
+                StaticPopup_Show("DUNGEONCLEAR_TEST_STOPONE",
+                    string.format(DCL("Stop the test run %s (%s)?"), run.id, DungeonName(run.token)), nil,
+                    function() Send(".dc test stop " .. run.id); capture.relistAt = GetTime() + 2 end)
+            end },
+            { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
+        }
+        EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
+    end
+
+    function DCTestShowMemberMenu(m)
+        local run = FindRun(selectedRun)
+        if not run then return end
+        local menu = {
+            { text = m.name, isTitle = true, notCheckable = true },
+            { text = DCL("Follow this bot (camera)"), notCheckable = true, func = function() FollowBot(run, m.name) end },
+            { text = DCL("Details (gear, stats, talents)"), notCheckable = true, func = function() if DCTestInspect then DCTestInspect(m.name) end end },
+            { text = DCL("Show its gear"), notCheckable = true, func = function() SendDcCommand("testgear", m.name, true) end },
+            { text = DCL("Teleport next to it (.appear)"), notCheckable = true, func = function() Send(".appear " .. m.name) end },
+            { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
+        }
+        EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
+    end
+
+    -- DCTEST4C: camera row. Follow the selected run's tank, step through its bots,
+    -- fly free (god view), or end the watch and go back where you were.
+    local function TankOf(run)
+        for _, m in ipairs(run.members) do if m.role == "tank" then return m.name end end
+        return run.members[1] and run.members[1].name
+    end
+    local VIEW_BTNS = {
+        { "Follow tank", 72, "Camera on the selected run's tank (enters that run first if you are not watching it).",
+          function()
+              local run = FindRun(selectedRun)
+              local tank = run and TankOf(run)
+              if tank then FollowBot(run, tank); SetCameraState("follow") end
+          end },
+        { "Prev", 52, "Camera on the previous bot of the run you are watching.",
+          function() Send(".dc spectate prev"); SetCameraState("follow") end },
+        { "Next", 52, "Camera on the next bot of the run you are watching.",
+          function() Send(".dc spectate next"); SetCameraState("follow") end },
+        { "Free view", 72, "God view: fly the camera freely around the run you are watching (WASD / mouse). Follow tank goes back to following.",
+          function()
+              if cameraState == "free" then
+                  out:AddMessage("|cffffd100" .. DCL("Already in free view. Use Follow tank to follow again, or End watching.") .. "|r")
+                  return
+              end
+              Send(".dc spectate free"); SetCameraState("free")
+          end },
+        { "End watching", 80, "End the watch: you go back to where you were, visible again.",
+          function() Send(".dc test watch off") end },
+    }
+    local prevView
+    for _, def in ipairs(VIEW_BTNS) do
+        local b = LButton(lf, def[1], def[2], def[4])
+        if prevView then b:SetPoint("LEFT", prevView, "RIGHT", 4, 0)
+        else b:SetPoint("TOPLEFT", lf, "TOPLEFT", 14, -58 - RUN_ROWS * RUN_H - 14) end
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText(DCL(def[1]))
+            GameTooltip:AddLine(DCL(def[3]), 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        prevView = b
+    end
+
+    local function RunSort(a, b)
+        if a.watching ~= b.watching then return a.watching end
+        return a.order < b.order
+    end
+
+    RenderMembers = function()
+        local run
+        for _, r in ipairs(runs) do if r.id == selectedRun then run = r end end
+        if not run then
+            memLabel:SetText(DCL("Party"))
+            for _, r in ipairs(memRows) do r:Hide() end
+            return
+        end
+        memLabel:SetText(DCL("Party") .. ": " .. DungeonName(run.token) .. "  |cff999999" .. run.id .. "|r")
+        for i, r in ipairs(memRows) do
+            local m = run.members[i]
+            r.member = m
+            if m then
+                local token = CLASS_TOKENS[m.class]
+                local tc = token and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[token]
+                if tc then r.cls:SetTexCoord(unpack(tc)); r.cls:Show() else r.cls:Hide() end
+                local cc = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
+                local color = cc and string.format("|cff%02x%02x%02x", cc.r * 255, cc.g * 255, cc.b * 255) or "|cffcccccc"
+                local role = DCL(ROLE_TAGS[m.role] or m.role)
+                local hp = m.alive and (m.hp .. "%") or ("|cffff3333" .. DCL("dead") .. "|r")
+                local mp = (m.mp >= 0) and ("  " .. DCL("MP") .. " " .. m.mp .. "%") or ""
+                local fight = m.combat and " |cffff6600*|r" or ""
+                r.text:SetText(string.format("|cffffd100%s|r  %s%s|r  %s %d  %s %d  %s %s%s%s",
+                    role, color, m.name, DCL("Lv"), m.level, DCL("iLvl"), m.ilvl, DCL("HP"), hp, mp, fight))
+                r:Show()
+            else
+                r:Hide()
+            end
+        end
+    end
+
+    RenderGear = function()
+        if bottomMode == "stats" and info then
+            RenderStats()
+            return
+        end
+        statsBox:Hide()
+        if not gear then
+            gearLabel:SetText(DCL("Run stats") .. ": |cff999999" .. DCL("right-click a run above") .. "|r")
+            gearBox:Hide()
+            return
+        end
+        gearLabel:SetText(DCL("Gear") .. ": " .. gear.name .. "  |cff999999" .. DCL("iLvl") .. " " .. gear.ilvl .. "|r")
+        gearBox:Show()
+        for i, c in ipairs(gearCells) do
+            local it = gear.items[i]
+            c.itemId = it and it.id
+            if it then
+                local name, _, quality, _, _, _, _, _, _, tex = GetItemInfo(it.id)
+                c.icon:SetTexture(tex or (GetItemIcon and GetItemIcon(it.id)) or "Interface\\Icons\\INV_Misc_QuestionMark")
+                local q = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality or it.q]
+                local hex = q and q.hex or "|cffffffff"
+                c.text:SetText(hex .. (name or ("#" .. it.id)) .. "|r |cff999999" .. it.ilvl .. "|r")
+                c:Show()
+            else
+                c:Hide()
+            end
+        end
+    end
+
+    RenderRuns = function()
+        table.sort(runs, RunSort)
+        local watching = 0
+        for _, r in ipairs(runs) do if r.watching then watching = watching + 1 end end
+        local capText = ""
+        if cap.value then
+            capText = " / " .. DCL("limit") .. " " .. (cap.value == 0 and DCL("unlimited") or cap.value)
+            if cap.over then capText = capText .. " |cffffd100(" .. DCL("conf") .. " " .. (cap.conf == 0 and DCL("unlimited") or cap.conf) .. ")|r" end
+        end
+        lCount:SetWidth(196)
+        lCount:SetText(DCL("Running:") .. " " .. #runs .. capText)
+        local found = false
+        for _, r in ipairs(runs) do if r.id == selectedRun then found = true end end
+        if not found then selectedRun = runs[1] and runs[1].id or nil end
+        runOffset = math.max(0, math.min(runOffset, #runs - RUN_ROWS))
+        for i, row in ipairs(runRows) do
+            local run = runs[i + runOffset]
+            row.run = run
+            if run then
+                local mark = run.watching and ("|cff00ff00" .. DCL("Watching") .. "|r  ") or ""
+                local heroic = run.heroic and (" |cffff8000" .. DCL("(Heroic)") .. "|r") or ""
+                local stage = DCL(STAGES[run.stage] or run.stage)
+                local alert = run.wiped and ("  |cffff3333" .. DCL("wiped") .. "|r") or (run.combat and ("  |cffff6600" .. DCL("in combat") .. "|r") or "")
+                local dead = (run.deaths and run.deaths > 0) and ("  |cffff3333" .. DCL("Deaths") .. " " .. run.deaths .. "|r") or ""
+                row.l1:SetText(string.format("%s|cffffd100%s|r%s  %s  %s %d/%d%s%s",
+                    mark, DungeonName(run.token), heroic, stage, DCL("Bosses"), run.killed, run.total, dead, alert))
+                local detail = DCL("Time") .. " " .. Clock(run.elapsed)
+                if run.boss and run.boss ~= "" then detail = detail .. "  " .. DCL("Target:") .. " " .. run.boss end
+                if run.stall and run.stall ~= "" then
+                    detail = detail .. "  |cffff3333" .. (DCLDetail(run.stall) or run.stall) .. "|r"
+                elseif run.state and run.state ~= "" then
+                    local label, color = FormatStateTiny(run.state)
+                    detail = detail .. "  |cff" .. RgbToHex(color) .. label .. "|r"
+                end
+                row.l2:SetText(detail)
+                if run.watching then
+                    DCBind(row.watch, "Watching")
+                    row.watch:Disable()
+                else
+                    DCBind(row.watch, "Watch")
+                    row.watch:Enable()
+                end
+                if run.id == selectedRun then row:LockHighlight() else row:UnlockHighlight() end
+                row:Show()
+            else
+                row:Hide()
+            end
+        end
+        if #runs == 0 then
+            runRows[1].run = nil
+            runRows[1].l1:SetText("|cff999999" .. DCL("No test run is running. Start one on the left.") .. "|r")
+            runRows[1].l2:SetText("")
+            runRows[1].watch:Hide()
+            runRows[1]:Show()
+        else
+            runRows[1].watch:Show()
+        end
+        RenderMembers()
+        RenderGear()
+    end
+
+    -- Server replies, routed here by OnAddonMessage.
+    local INSPECT_KINDS = { TIN_START = true, TIN_END = true, TIN_ERR = true, TIS = true, TIS2 = true,
+                            TII = true, TIT = true, TIP = true, TIG = true, TIA = true }
+    function DCTestOnAddon(parts)
+        local kind = parts[1]
+        if INSPECT_KINDS[kind] then
+            if DCTestInspectOnAddon then DCTestInspectOnAddon(parts) end
+            return
+        end
+        if kind == "TRCAP" then
+            cap.value, cap.conf, cap.over = tonumber(parts[2]) or 0, tonumber(parts[3]) or 0, parts[4] == "1"
+            RenderRuns()
+            return
+        end
+        if kind == "TR_START" then
+            pending = {}
+            if parts[3] then
+                cap.value, cap.conf, cap.over = tonumber(parts[3]) or 0, tonumber(parts[4]) or 0, parts[5] == "1"
+            end
+        elseif kind == "TR" and pending then
+            pending[#pending + 1] = {
+                order = #pending + 1, id = parts[2], token = parts[3], heroic = parts[4] == "1",
+                stage = parts[5], elapsed = tonumber(parts[6]) or 0, killed = tonumber(parts[7]) or 0,
+                total = tonumber(parts[8]) or 0, watching = parts[9] == "1", wiped = parts[10] == "1",
+                combat = parts[11] == "1", level = tonumber(parts[12]) or 0, members = {},
+            }
+        elseif kind == "TRS" and pending then
+            for _, r in ipairs(pending) do
+                if r.id == parts[2] then r.state, r.boss, r.stall = parts[3], parts[4], parts[5] end
+            end
+        elseif kind == "TRX" and pending then
+            for _, r in ipairs(pending) do
+                if r.id == parts[2] then
+                    r.seed, r.gearIlvl, r.gearQuality = tonumber(parts[3]) or 0, tonumber(parts[4]) or 0, tonumber(parts[5]) or 0
+                    r.roster = parts[6] == "1"
+                    r.deaths, r.pulls = tonumber(parts[7]) or 0, tonumber(parts[8]) or 0
+                    r.comp = {}
+                    for name, role in (parts[9] or ""):gmatch("([^:,]+):([^,]*)") do
+                        r.comp[#r.comp + 1] = { name = name, role = role }
+                    end
+                end
+            end
+        elseif kind == "TI_START" then
+            infoPending = { id = parts[2], kills = {}, deaths = {} }
+        elseif kind == "TIB" and infoPending then
+            infoPending.kills[#infoPending.kills + 1] = { t = tonumber(parts[2]) or 0, name = parts[3] or "" }
+        elseif kind == "TID" and infoPending then
+            infoPending.deaths[#infoPending.deaths + 1] = { t = tonumber(parts[2]) or 0, name = parts[3] or "",
+                onBoss = parts[4] == "1", by = parts[5] or "" }
+        elseif kind == "TI_END" and infoPending then
+            info, infoPending = infoPending, nil
+            bottomMode = "stats"
+            if lf:IsShown() then RenderGear() end
+        elseif kind == "TI_ERR" then
+            out:AddMessage("|cffff3333" .. DCL("That test run has already finished.") .. "|r")
+        elseif kind == "TRM" and pending then
+            for _, r in ipairs(pending) do
+                if r.id == parts[2] then
+                    r.members[#r.members + 1] = {
+                        name = parts[3], class = tonumber(parts[4]) or 0, role = parts[5],
+                        level = tonumber(parts[6]) or 0, ilvl = tonumber(parts[7]) or 0,
+                        hp = tonumber(parts[8]) or 0, mp = tonumber(parts[9]) or -1,
+                        alive = parts[10] == "1", combat = parts[11] == "1",
+                    }
+                end
+            end
+        elseif kind == "TR_END" and pending then
+            runs, pending = pending, nil
+            -- The server knows which run you sit in; that survives a /reload, the flag does not.
+            for _, r in ipairs(runs) do if r.watching then DCTestWatchActive = true end end
+            if lf:IsShown() then RenderRuns() end
+        elseif kind == "TR_ERR" then
+            out:AddMessage("|cffff3333" .. DCL("The test-run list needs a GM account.") .. "|r")
+            lf:Hide()
+        elseif kind == "TRG_START" then
+            gearPending = { name = parts[2], class = tonumber(parts[3]) or 0, level = tonumber(parts[4]) or 0,
+                            ilvl = tonumber(parts[5]) or 0, items = {} }
+        elseif kind == "TRG" and gearPending then
+            local it = { slot = tonumber(parts[2]) or 0, id = tonumber(parts[3]) or 0,
+                         ilvl = tonumber(parts[4]) or 0, q = tonumber(parts[5]) or 1 }
+            gearPending.items[#gearPending.items + 1] = it
+            -- Ask the client cache now so names/icons are there for the next redraw.
+            if GetItemInfo(it.id) == nil then
+                GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+                GameTooltip:SetHyperlink("item:" .. it.id)
+                GameTooltip:Hide()
+            end
+        elseif kind == "TRG_END" and gearPending then
+            gear, gearPending = gearPending, nil
+            bottomMode = "gear"
+            capture.regearAt = GetTime() + 1.5  -- second paint once the item cache answered
+            if lf:IsShown() then RenderGear() end
+        elseif kind == "TRG_ERR" then
+            out:AddMessage("|cffff3333" .. DCL("That bot is no longer online:") .. " " .. (parts[2] or "") .. "|r")
+        end
+    end
+
+    local lfElapsed = 0
+    lf:SetScript("OnUpdate", function(_, elapsed)
+        lfElapsed = lfElapsed + elapsed
+        if lfElapsed >= 5 or (capture.relistAt and GetTime() >= capture.relistAt) then
+            lfElapsed = 0
+            capture.relistAt = nil
+            SendDcCommand("testruns", "", true)
+        end
+        if pendingFollow and GetTime() >= pendingFollow.at then
+            Send(".dc spectate follow " .. pendingFollow.name)
+            pendingFollow = nil
+        end
+        if capture.regearAt and GetTime() >= capture.regearAt then
+            capture.regearAt = nil
+            RenderGear()
+        end
+    end)
+    lf:SetScript("OnShow", function()
+        PlaceList()
+        DB().listShown = true
+        lfElapsed = 0
+        RenderRuns()
+        SendDcCommand("testruns", "", true)
+    end)
+    lf:SetScript("OnHide", function() DB().listShown = false end)
+    lClose:SetScript("OnClick", function() lf:Hide() end)
+
+    local listBtn = Button("Test run list", 96, function()
+        if lf:IsShown() then lf:Hide() else lf:Show() end
+    end, "Open the list of every running test: watch any of them, see each party's bots, their level, item level, health and gear.")
+    listBtn:SetPoint("LEFT", runLabel, "RIGHT", 12, 0)
+    DCLoc.OnChange(function() if lf:IsShown() then RenderRuns() end end)
+    tf:HookScript("OnShow", function() if DB().listShown then lf:Show() end end)
+    tf:HookScript("OnHide", function() local was = lf:IsShown(); lf:Hide(); DB().listShown = was end)
+
+    testBtn:SetScript("OnClick", function()
+        if tf:IsShown() then tf:Hide() else tf:Show() end
+    end)
+    Tip(testBtn, "Bot Test Runs (GM)", "Start, watch and stop automated bot test runs (.dc test).")
+    DCLoc.OnChange(function() if tf:IsShown() then RefreshDungeonList() end end)
+end)()
+
+-- Bot detail window (RebornWOW DCTEST4A): a test bot's character sheet -- gear laid
+-- out like the character pane (C), stats, all three talent trees, glyphs and the
+-- playerbots strategies it runs with. The bots are in other instances, so the
+-- portrait is the class icon (the client can only draw a live portrait for a unit
+-- it can see). Fed by the server's "testinspect <name>" reply.
+;(function()
+    local CLASS_TOKENS = { "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "DEATHKNIGHT",
+                           "SHAMAN", "MAGE", "WARLOCK", nil, "DRUID" }
+    local CLASS_NAMES = { "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "Death Knight",
+                          "Shaman", "Mage", "Warlock", nil, "Druid" }
+    local RACE_NAMES = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll",
+                         nil, "Blood Elf", "Draenei" }
+    local TREES = {
+        { "Arms", "Fury", "Protection" }, { "Holy", "Protection", "Retribution" },
+        { "Beast Mastery", "Marksmanship", "Survival" }, { "Assassination", "Combat", "Subtlety" },
+        { "Discipline", "Holy", "Shadow" }, { "Blood", "Frost", "Unholy" },
+        { "Elemental", "Enhancement", "Restoration" }, { "Arcane", "Fire", "Frost" },
+        { "Affliction", "Demonology", "Destruction" }, nil, { "Balance", "Feral Combat", "Restoration" },
+    }
+    -- server equipment slot -> paper-doll background
+    local SLOT_BG = { [0] = "Head", "Neck", "Shoulder", "Shirt", "Chest", "Waist", "Legs", "Feet", "Wrists",
+                      "Hands", "Finger", "Finger", "Trinket", "Trinket", "Chest", "MainHand",
+                      "SecondaryHand", "Ranged", "Tabard" }
+    local SLOT_NAMES = { [0] = "Head", "Neck", "Shoulder", "Shirt", "Chest", "Waist", "Legs", "Feet", "Wrist",
+                         "Hands", "Finger", "Finger", "Trinket", "Trinket", "Back", "Main Hand",
+                         "Off Hand", "Ranged", "Tabard" }
+    local ENCHANTABLE = { [0] = true, [2] = true, [4] = true, [6] = true, [7] = true, [8] = true,
+                          [9] = true, [14] = true, [15] = true }
+    local LEFT_SLOTS = { 0, 1, 2, 14, 4, 3, 18, 8 }
+    local RIGHT_SLOTS = { 9, 5, 6, 7, 10, 11, 12, 13 }
+    local BOTTOM_SLOTS = { 15, 16, 17 }
+
+    local data, pending = nil, nil
+    local W, H = 444, 520
+
+    local f = CreateFrame("Frame", "DungeonClearBotInspectFrame", UIParent)
+    f:SetSize(W, H)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 40)
+    f:SetFrameStrata("DIALOG")
+    f:SetToplevel(true)
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    f:SetBackdropColor(0.03, 0.03, 0.05, 0.94)
+    f:SetBackdropBorderColor(0.20, 0.22, 0.28, 1.0)
+    f:Hide()
+    tinsert(UISpecialFrames, "DungeonClearBotInspectFrame")
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+
+    -- header: class icon, name, identity, spec
+    local portrait = f:CreateTexture(nil, "ARTWORK")
+    portrait:SetSize(48, 48)
+    portrait:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+    portrait:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
+    local nameText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    nameText:SetPoint("TOPLEFT", portrait, "TOPRIGHT", 10, -2)
+    local idText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    idText:SetPoint("TOPLEFT", nameText, "BOTTOMLEFT", 0, -3)
+    local specText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    specText:SetPoint("TOPLEFT", idText, "BOTTOMLEFT", 0, -3)
+    local refresh = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    refresh:SetSize(56, 20)
+    refresh:SetPoint("TOPRIGHT", f, "TOPRIGHT", -30, -8)
+    DCBind(refresh, "Refresh")
+    refresh:SetScript("OnClick", function() if data then SendDcCommand("testinspect", data.name, true) end end)
+
+    -- tabs
+    local TAB_DEFS = { "Gear", "Stats", "Talents", "Glyphs & AI" }
+    local tabs, pages = {}, {}
+    local current = 1
+    local Render  -- forward
+    for i, label in ipairs(TAB_DEFS) do
+        local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        b:SetSize(100, 22)
+        b:SetPoint("TOPLEFT", f, "TOPLEFT", 14 + (i - 1) * 104, -68)
+        DCBind(b, label)
+        b:SetScript("OnClick", function() current = i; Render() end)
+        tabs[i] = b
+        local p = CreateFrame("Frame", nil, f)
+        p:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -96)
+        p:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, 10)
+        p:SetBackdrop({
+            bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 12, edgeSize = 12,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 }
+        })
+        p:SetBackdropColor(0.10, 0.12, 0.16, 0.60)
+        p:SetBackdropBorderColor(0.15, 0.17, 0.22, 0.8)
+        p:Hide()
+        pages[i] = p
+    end
+
+    local function ItemLink(it)
+        return string.format("item:%d:%d:%d:%d:%d:0:%d:%d:%d", it.id, it.ench, it.g1, it.g2, it.g3,
+            it.rand, it.suffix, data and data.level or 80)
+    end
+
+    ------------------------------------------------------------------ gear page
+    local gp = pages[1]
+    local slotButtons = {}
+    local function MakeSlot(slot, x, y)
+        local b = CreateFrame("Button", nil, gp)
+        b:SetSize(36, 36)
+        b:SetPoint("TOPLEFT", gp, "TOPLEFT", x, y)
+        b.bg = b:CreateTexture(nil, "BACKGROUND")
+        b.bg:SetAllPoints()
+        b.bg:SetTexture("Interface\\PaperDoll\\UI-PaperDoll-Slot-" .. SLOT_BG[slot])
+        b.icon = b:CreateTexture(nil, "ARTWORK")
+        b.icon:SetAllPoints()
+        b.border = b:CreateTexture(nil, "OVERLAY")
+        b.border:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+        b.border:SetBlendMode("ADD")
+        b.border:SetSize(66, 66)
+        b.border:SetPoint("CENTER", b, "CENTER", 0, 0)
+        b.mark = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        b.mark:SetPoint("TOPRIGHT", b, "TOPRIGHT", 1, 1)
+        b.ilvl = b:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+        b.ilvl:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 0, 1)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            if self.item then
+                GameTooltip:SetHyperlink(ItemLink(self.item))
+            else
+                GameTooltip:SetText(DCL(SLOT_NAMES[slot]))
+                GameTooltip:AddLine(DCL("empty"), 0.6, 0.6, 0.6)
+            end
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        slotButtons[slot] = b
+    end
+    for i, slot in ipairs(LEFT_SLOTS) do MakeSlot(slot, 8, -8 - (i - 1) * 42) end
+    for i, slot in ipairs(RIGHT_SLOTS) do MakeSlot(slot, W - 20 - 8 - 36, -8 - (i - 1) * 42) end
+    for i, slot in ipairs(BOTTOM_SLOTS) do MakeSlot(slot, (W - 20) / 2 - 64 + (i - 1) * 46, -8 - 8 * 42 - 4) end
+    local gearSummary = gp:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    gearSummary:SetPoint("TOPLEFT", gp, "TOPLEFT", 56, -12)
+    gearSummary:SetPoint("RIGHT", gp, "RIGHT", -56, 0)
+    gearSummary:SetJustifyH("LEFT")
+    gearSummary:SetJustifyV("TOP")
+    gearSummary:SetSpacing(4)
+    local bigIcon = gp:CreateTexture(nil, "ARTWORK")
+    bigIcon:SetSize(96, 96)
+    bigIcon:SetPoint("CENTER", gp, "CENTER", 0, -40)
+    bigIcon:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
+    bigIcon:SetAlpha(0.35)
+
+    local function RenderGear()
+        local enchanted, enchantable, gems, sockets, missing = 0, 0, 0, 0, {}
+        for slot, b in pairs(slotButtons) do
+            local it = data.items[slot]
+            b.item = it
+            if it then
+                local _, _, quality, _, _, _, _, _, _, tex = GetItemInfo(it.id)
+                b.icon:SetTexture(tex or (GetItemIcon and GetItemIcon(it.id)) or "Interface\\Icons\\INV_Misc_QuestionMark")
+                b.icon:Show()
+                local q = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality or it.q]
+                if q and (quality or it.q) >= 2 then
+                    b.border:SetVertexColor(q.r, q.g, q.b)
+                    b.border:Show()
+                else
+                    b.border:Hide()
+                end
+                b.ilvl:SetText(it.ilvl)
+                            if ENCHANTABLE[slot] then
+                    enchantable = enchantable + 1
+                    if it.ench > 0 then enchanted = enchanted + 1 else missing[#missing + 1] = DCL(SLOT_NAMES[slot]) end
+                end
+                local g = (it.g1 > 0 and 1 or 0) + (it.g2 > 0 and 1 or 0) + (it.g3 > 0 and 1 or 0)
+                gems, sockets = gems + g, sockets + it.sockets
+                b.mark:SetText((ENCHANTABLE[slot] and it.ench == 0) and "|cffff3333!|r" or "")
+            else
+                b.icon:Hide()
+                b.border:Hide()
+                b.ilvl:SetText("")
+                b.mark:SetText("")
+            end
+        end
+        local lines = {
+            DCL("Average item level") .. ": |cffffd100" .. data.ilvl .. "|r",
+            DCL("Enchants") .. ": " .. (enchanted < enchantable and "|cffff3333" or "|cff00ff00") ..
+                enchanted .. "/" .. enchantable .. "|r",
+        }
+        if #missing > 0 then lines[#lines + 1] = "|cffff3333" .. DCL("No enchant:") .. " " .. table.concat(missing, ", ") .. "|r" end
+        lines[#lines + 1] = DCL("Gems") .. ": " .. (gems < sockets and "|cffff3333" or "|cff00ff00") .. gems .. "/" .. sockets .. "|r"
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "|cff999999" .. DCL("Hover an item for its full tooltip.") .. "|r"
+        gearSummary:SetText(table.concat(lines, "\n"))
+    end
+
+    ------------------------------------------------------------------ stats page
+    local sp = pages[2]
+    local statCols = {}
+    for c = 1, 2 do
+        local fs = sp:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        fs:SetPoint("TOPLEFT", sp, "TOPLEFT", 12 + (c - 1) * 212, -10)
+        fs:SetWidth(200)
+        fs:SetJustifyH("LEFT")
+        fs:SetJustifyV("TOP")
+        fs:SetSpacing(3)
+        statCols[c] = fs
+    end
+    local function Row(label, value) return "|cffcccccc" .. DCL(label) .. "|r  |cffffffff" .. value .. "|r" end
+    local function Head(label) return "|cff3da6ff" .. DCL(label) .. "|r" end
+    local function RenderStats()
+        local s = data.stats or {}
+        local s2 = data.stats2 or {}
+        local function n(t, i) return t[i] or "-" end
+        statCols[1]:SetText(table.concat({
+            Head("Base"),
+            Row("Strength", n(s, 1)), Row("Agility", n(s, 2)), Row("Stamina", n(s, 3)),
+            Row("Intellect", n(s, 4)), Row("Spirit", n(s, 5)), Row("Armor", n(s, 6)),
+            Row("Health", data.maxHp), Row("Mana", data.maxMana > 0 and data.maxMana or "-"),
+            "",
+            Head("Melee / Ranged"),
+            Row("Attack power", n(s, 7)), Row("Ranged attack power", n(s, 8)),
+            Row("Hit rating", n(s2, 1)), Row("Melee crit", n(s2, 3) .. "%"), Row("Ranged crit", n(s2, 4) .. "%"),
+            Row("Haste rating", n(s2, 6)), Row("Expertise", n(s2, 8)), Row("Armor penetration rating", n(s2, 9)),
+        }, "\n"))
+        statCols[2]:SetText(table.concat({
+            Head("Spell"),
+            Row("Spell power", n(s, 9)), Row("Healing", n(s, 10)), Row("Spell hit rating", n(s2, 2)),
+            Row("Spell crit", n(s2, 5) .. "%"), Row("Spell haste rating", n(s2, 7)),
+            "",
+            Head("Defense"),
+            Row("Defense rating", n(s2, 10)), Row("Dodge", n(s2, 11) .. "%"), Row("Parry", n(s2, 12) .. "%"),
+            Row("Block", n(s2, 13) .. "%"), Row("Resilience", n(s2, 14)),
+        }, "\n"))
+    end
+
+    ---------------------------------------------------------------- talents page
+    local tp = pages[3]
+    local treeHeads, talentButtons = {}, {}
+    local TREE_W, CELL = 138, 31
+    for t = 1, 3 do
+        local fs = tp:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fs:SetPoint("TOPLEFT", tp, "TOPLEFT", 8 + (t - 1) * (TREE_W + 4), -8)
+        fs:SetWidth(TREE_W)
+        fs:SetJustifyH("CENTER")
+        treeHeads[t] = fs
+    end
+    local function TalentButton(i)
+        local b = talentButtons[i]
+        if b then return b end
+        b = CreateFrame("Button", nil, tp)
+        b:SetSize(26, 26)
+        b.icon = b:CreateTexture(nil, "ARTWORK")
+        b.icon:SetAllPoints()
+        b.rank = b:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+        b.rank:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", 3, -2)
+        b:SetScript("OnEnter", function(self)
+            if not self.spell then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink("spell:" .. self.spell)
+            GameTooltip:AddLine(string.format("%s %d/%d", DCL("Rank"), self.r, self.max), 1, 0.82, 0)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        talentButtons[i] = b
+        return b
+    end
+    local function RenderTalents()
+        local names = TREES[data.class]
+        for t = 1, 3 do
+            local nm = names and DCL(names[t]) or (DCL("Tree") .. " " .. t)
+            treeHeads[t]:SetText(nm .. "  |cffffffff" .. (data.points[t] or 0) .. "|r")
+        end
+        for _, b in ipairs(talentButtons) do b:Hide() end
+        for i, tl in ipairs(data.talents) do
+            local b = TalentButton(i)
+            b:ClearAllPoints()
+            b:SetPoint("TOPLEFT", tp, "TOPLEFT", 8 + tl.tab * (TREE_W + 4) + 6 + tl.col * CELL, -30 - tl.row * CELL)
+            local _, _, tex = GetSpellInfo(tl.spell)
+            b.icon:SetTexture(tex or "Interface\\Icons\\INV_Misc_QuestionMark")
+            b.icon:SetDesaturated(tl.rank == 0)
+            b.icon:SetAlpha(tl.rank == 0 and 0.45 or 1)
+            local color = tl.rank == 0 and "|cff808080" or (tl.rank >= tl.max and "|cffffd100" or "|cff40ff40")
+            b.rank:SetText(color .. tl.rank .. "/" .. tl.max .. "|r")
+            b.spell, b.r, b.max = tl.spell, tl.rank, tl.max
+            b:Show()
+        end
+    end
+
+    ------------------------------------------------------------ glyphs & AI page
+    local ap = pages[4]
+    local glyphHead = ap:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    glyphHead:SetPoint("TOPLEFT", ap, "TOPLEFT", 10, -10)
+    DCBind(glyphHead, "Glyphs")
+    glyphHead:SetTextColor(0.24, 0.60, 1.0)
+    local glyphRows = {}
+    for i = 1, 6 do
+        local b = CreateFrame("Button", nil, ap)
+        b:SetSize(410, 20)
+        b:SetPoint("TOPLEFT", ap, "TOPLEFT", 10, -28 - (i - 1) * 22)
+        b.icon = b:CreateTexture(nil, "ARTWORK")
+        b.icon:SetSize(18, 18)
+        b.icon:SetPoint("LEFT", b, "LEFT", 0, 0)
+        b.text = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        b.text:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
+        b:SetScript("OnEnter", function(self)
+            if not self.spell then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink("spell:" .. self.spell)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        glyphRows[i] = b
+    end
+    local aiText = ap:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    aiText:SetPoint("TOPLEFT", ap, "TOPLEFT", 10, -28 - 6 * 22 - 8)
+    aiText:SetWidth(W - 44)
+    aiText:SetJustifyH("LEFT")
+    aiText:SetJustifyV("TOP")
+    aiText:SetSpacing(3)
+    local function RenderGlyphs()
+        for i, b in ipairs(glyphRows) do
+            local id = data.glyphs[i]
+            b.spell = id
+            if id then
+                local name, _, tex = GetSpellInfo(id)
+                b.icon:SetTexture(tex or "Interface\\Icons\\INV_Glyph_MajorWarrior")
+                b.text:SetText(name or ("#" .. id))
+                b:Show()
+            else
+                b:Hide()
+            end
+        end
+        if #data.glyphs == 0 then
+            glyphRows[1].spell = nil
+            glyphRows[1].icon:SetTexture(nil)
+            glyphRows[1].text:SetText("|cff999999" .. DCL("no glyphs") .. "|r")
+            glyphRows[1]:Show()
+        end
+        aiText:SetText("|cff3da6ff" .. DCL("Combat strategies") .. "|r\n" .. (data.aiCo ~= "" and data.aiCo or "-") ..
+            "\n\n|cff3da6ff" .. DCL("Non-combat strategies") .. "|r\n" .. (data.aiNc ~= "" and data.aiNc or "-"))
+    end
+
+    --------------------------------------------------------------------- render
+    Render = function()
+        for i, p in ipairs(pages) do
+            if i == current then p:Show(); tabs[i]:LockHighlight() else p:Hide(); tabs[i]:UnlockHighlight() end
+        end
+        if not data then return end
+        local token = CLASS_TOKENS[data.class]
+        local tc = token and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[token]
+        if tc then
+            portrait:SetTexCoord(unpack(tc)); bigIcon:SetTexCoord(unpack(tc))
+            portrait:Show(); bigIcon:Show()
+        else
+            portrait:Hide(); bigIcon:Hide()
+        end
+        local cc = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
+        nameText:SetText(data.name)
+        if cc then nameText:SetTextColor(cc.r, cc.g, cc.b) else nameText:SetTextColor(0.8, 0.8, 0.8) end
+        local race = RACE_NAMES[data.race] and DCL(RACE_NAMES[data.race]) or (DCL("Race") .. " " .. data.race)
+        local class = CLASS_NAMES[data.class] and DCL(CLASS_NAMES[data.class]) or (DCL("Class") .. " " .. data.class)
+        idText:SetText(string.format("%s %d  %s  %s%s", DCL("Lv"), data.level, race, class,
+            data.alive and "" or ("  |cffff3333" .. DCL("dead") .. "|r")))
+        local trees = TREES[data.class]
+        local best, bestPts = 1, -1
+        for t = 1, 3 do if (data.points[t] or 0) > bestPts then best, bestPts = t, data.points[t] or 0 end end
+        local specName = trees and DCL(trees[best]) or (DCL("Tree") .. " " .. best)
+        specText:SetText(string.format("%s %d   %s %s (%d/%d/%d)%s", DCL("iLvl"), data.ilvl, DCL("Talents"), specName,
+            data.points[1] or 0, data.points[2] or 0, data.points[3] or 0,
+            data.free > 0 and ("  |cffff3333" .. DCL("unspent") .. " " .. data.free .. "|r") or ""))
+        if current == 1 then RenderGear()
+        elseif current == 2 then RenderStats()
+        elseif current == 3 then RenderTalents()
+        else RenderGlyphs() end
+    end
+
+    local repaintAt
+    f:SetScript("OnUpdate", function()
+        if repaintAt and GetTime() >= repaintAt then repaintAt = nil; Render() end
+    end)
+
+    local function Prefetch(id, kind)
+        if kind == "item" and GetItemInfo(id) == nil then
+            GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+            GameTooltip:SetHyperlink("item:" .. id)
+            GameTooltip:Hide()
+        end
+    end
+
+    function DCTestInspectOnAddon(parts)
+        local kind = parts[1]
+        if kind == "TIN_START" then
+            pending = { name = parts[2], class = tonumber(parts[3]) or 0, race = tonumber(parts[4]) or 0,
+                gender = tonumber(parts[5]) or 0, level = tonumber(parts[6]) or 0, ilvl = tonumber(parts[7]) or 0,
+                specTab = tonumber(parts[8]) or 0, maxHp = tonumber(parts[9]) or 0, maxMana = tonumber(parts[10]) or 0,
+                free = tonumber(parts[11]) or 0, alive = parts[12] == "1",
+                items = {}, talents = {}, points = { 0, 0, 0 }, glyphs = {}, aiCo = "", aiNc = "" }
+        elseif not pending then
+            if kind == "TIN_ERR" and DEFAULT_CHAT_FRAME then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[DC] " .. DCL("That bot is no longer online:") .. " " .. (parts[2] or "") .. "|r")
+            end
+            return
+        elseif kind == "TIS" then
+            pending.stats = { unpack(parts, 2) }
+        elseif kind == "TIS2" then
+            pending.stats2 = { unpack(parts, 2) }
+        elseif kind == "TII" then
+            local it = { id = tonumber(parts[3]) or 0, ilvl = tonumber(parts[4]) or 0, q = tonumber(parts[5]) or 1,
+                ench = tonumber(parts[6]) or 0, g1 = tonumber(parts[7]) or 0, g2 = tonumber(parts[8]) or 0,
+                g3 = tonumber(parts[9]) or 0, rand = tonumber(parts[10]) or 0, suffix = tonumber(parts[11]) or 0,
+                sockets = tonumber(parts[12]) or 0 }
+            pending.items[tonumber(parts[2]) or -1] = it
+            Prefetch(it.id, "item")
+        elseif kind == "TIT" then
+            pending.talents[#pending.talents + 1] = { tab = tonumber(parts[2]) or 0, row = tonumber(parts[3]) or 0,
+                col = tonumber(parts[4]) or 0, rank = tonumber(parts[5]) or 0, max = tonumber(parts[6]) or 1,
+                spell = tonumber(parts[7]) or 0 }
+        elseif kind == "TIP" then
+            pending.points = { tonumber(parts[2]) or 0, tonumber(parts[3]) or 0, tonumber(parts[4]) or 0 }
+        elseif kind == "TIG" then
+            for id in (parts[2] or ""):gmatch("(%d+)") do pending.glyphs[#pending.glyphs + 1] = tonumber(id) end
+        elseif kind == "TIA" then
+            if parts[2] == "co" then pending.aiCo = parts[3] or "" else pending.aiNc = parts[3] or "" end
+        elseif kind == "TIN_END" then
+            data, pending = pending, nil
+            f:Show()
+            Render()
+            repaintAt = GetTime() + 1.5  -- once the item cache has answered
+        end
+    end
+
+    -- Opened from the test-run list.
+    function DCTestInspect(name)
+        SendDcCommand("testinspect", name, true)
+    end
+
+    f:SetScript("OnShow", function() Render() end)
+    DCLoc.OnChange(function() if f:IsShown() then Render() end end)
+end)()
+
 local toggleBossesBtn = CreateFrame("Button", "DungeonClearToggleBossesButton", frame)
 toggleBossesBtn:SetSize(24, 24)
 toggleBossesBtn:SetPoint("LEFT", listLabel, "RIGHT", 6, 0)
@@ -1467,6 +3196,7 @@ UpdateLayout = function()
         closeBtn:Hide()
         tinyBtn:Hide()
         langBtn:Hide()
+        testBtn:Hide()
         onBtn:Hide()
         offBtn:Hide()
         skipBtn:Hide()
@@ -1501,6 +3231,7 @@ UpdateLayout = function()
         closeBtn:Show()
         tinyBtn:Show()
         langBtn:Show()
+        testBtn:Show()
         tinyBtn:SetText(DCL("Tiny"))
         onBtn:Show()
         offBtn:Show()
@@ -1719,6 +3450,9 @@ local function OnAddonMessage(prefix, message, channel, sender)
         -- can't run into a refusal. Sent in answer to our status poll.
         spectateAvailable = (parts[2] ~= "0")
         if ApplySpectateAvailability then ApplySpectateAvailability() end
+    elseif parts[1] and (parts[1]:sub(1, 2) == "TR" or parts[1]:sub(1, 2) == "TI") and DCTestOnAddon then
+        -- Test-run list / bot gear for the test window (RebornWOW DCTEST2A).
+        DCTestOnAddon(parts)
     elseif parts[1] == "SELFBOT" then
         -- Self-bot state for the auto-play row: "1 <role>" or "0".
         local was = selfBotUI and selfBotUI.role
@@ -2523,4 +4257,4 @@ SlashCmdList["DUNGEONCLEAR"] = function(msg)
 end
 
 -- Print loaded notice
-DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ffDungeonClear Addon v3.1 loaded.|r Type /dc to toggle window, or see Interface > AddOns > DungeonClear.")
+DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ffDungeonClear Addon v3.6-reborn11 loaded.|r Type /dc to toggle window, or see Interface > AddOns > DungeonClear.")

@@ -42,6 +42,13 @@ for loot, opens doors, and recovers from stalls. With this addon you just press
   own runs — see below.
 - **Remembers your setup.** Window position, size, and your settings stick
   between sessions.
+- **Bot test runs (GM).** The **Test** button opens a window for the
+  server's `.dc test` harness: pick a dungeon, start a run with a random
+  playerbot party (item level / quality / seed) or with your own offline
+  characters, then Watch, Status, Next run, Stop watching, Stop. The server's
+  replies are shown in the window; "Watch after start" moves your camera onto
+  the bots 10 seconds after a start. GM accounts only — the buttons type the
+  `.dc test` chat commands for you.
 
 ## Requirements
 
