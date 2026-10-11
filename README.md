@@ -188,6 +188,23 @@ If you'd rather type, every button has a command:
 | `/dc status` | Refresh the status line. |
 | `/dc bosses` | Refresh the boss list. |
 | `/dc go <entry>` | Send the tank to a boss by its creature id. |
+| `/dc gps` | Open / close the coordinate copy box (see below). |
+
+### Coordinate copy (`.gps`)
+
+Open the window with the **GPS** button in the panel header (or `/dc gps`) and press
+**Capture position**, or type `.gps` as a GM (select a creature first to capture its position
+instead of yours). The server also prints one `[gps] ...` line, which the addon keeps with the
+place it was taken at (zone or instance, and sub-zone).
+
+- Pick a format: Raw, Teleport (`.go xyz ...`), SQL tuple, Event consts (C++ `X = ...f;`), or
+  Move NPC SQL (`UPDATE creature ...`, creatures only), then press **Copy**. With the
+  AwesomeWotlk client extension the text goes straight to the clipboard; without it the text is
+  selected for Ctrl+C.
+- Up to 200 points are kept (starred ones never drop off), 10 per page. Hover a point for its
+  details; left-click shows it; right-click for: copy / copy as any format, teleport here (GM),
+  rename / note, star, send to chat (say, party, raid, guild), delete.
+- *Starred only* filters the list; **Clear** keeps starred points.
 
 ## Troubleshooting
 

@@ -1400,6 +1400,23 @@ local testBtn = CreateFrame("Button", "DungeonClearTestButton", frame, "UIPanelB
 testBtn:SetSize(44, 20)
 testBtn:SetPoint("RIGHT", langBtn, "LEFT", -2, 0)
 DCBind(testBtn, "Test")
+-- RebornWOW DCGPS1B: header button for the coordinate copy window (GM: the window's
+-- Capture button sends .gps for you). A do-block keeps its local out of the main
+-- chunk's 200-local budget.
+do
+    local gpsBtn = CreateFrame("Button", "DungeonClearGpsButton", frame, "UIPanelButtonTemplate")
+    gpsBtn:SetSize(40, 20)
+    gpsBtn:SetPoint("RIGHT", testBtn, "LEFT", -2, 0)
+    DCBind(gpsBtn, "GPS")
+    gpsBtn:SetScript("OnClick", function() if DCGpsToggle then DCGpsToggle() end end)
+    gpsBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(DCL("Coordinates"))
+        GameTooltip:AddLine(DCL("Open the coordinate copy window (GM: capture with one click)."), 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    gpsBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+end
 -- A function rather than a do-block: its locals then count against its own 200-local
 -- limit instead of the main chunk's, which this file is close to.
 ;(function()
@@ -4233,6 +4250,439 @@ DCLoc.OnChange(function()
     if BuildSettingsFromCache then BuildSettingsFromCache() end
 end)
 
+-- Coordinate copy box (RebornWOW DCGPS1A/1C). `.gps` (GM) also prints one machine-readable
+-- "[gps] ..." line; this window keeps those points with the place name they were taken at,
+-- shows each one in a pick of formats, and copies it. Copying uses CopyToClipboard() when the
+-- client provides it (AwesomeWotlk does); otherwise the text is pre-selected for Ctrl+C.
+-- Open by hand with /dc gps or the header GPS button.
+;(function()
+    local MAX_HISTORY = 200   -- unstarred points kept; starred ones are never pushed out
+    local PAGE_SIZE = 10
+    local FORMATS = {
+        { key = "raw",  label = "Raw",          width = 60 },
+        { key = "go",   label = "Teleport",     width = 84 },
+        { key = "sql",  label = "SQL",          width = 56 },
+        { key = "dc",   label = "Event consts", width = 84 },
+        { key = "move", label = "Move NPC SQL", width = 120 },
+    }
+    local current = nil      -- the point shown
+    local fmt = "raw"
+    local loadedFormat = false  -- saved format is read once, then the buttons own it
+    local page = 1
+    local Render  -- forward
+
+    local function DB()
+        DungeonClearDB.gps = DungeonClearDB.gps or {}
+        local g = DungeonClearDB.gps
+        g.history = g.history or {}
+        if g.autoPopup == nil then g.autoPopup = true end
+        if g.format and not loadedFormat then fmt = g.format end
+        loadedFormat = true
+        return g
+    end
+
+    local function Parse(line)
+        local x, y, z, o, map, zone, area, inst, phase, kind, entry, spawn, name = line:match(
+            "^%[gps%] X (%S+) Y (%S+) Z (%S+) O (%S+) map (%d+) zone (%d+) area (%d+) instance (%d+) phase (%d+) type (%S+) entry (%d+) spawn (%d+) name ?(.*)$")
+        if not x then return nil end
+        return { x = tonumber(x), y = tonumber(y), z = tonumber(z), o = tonumber(o), map = tonumber(map),
+                 zone = tonumber(zone), area = tonumber(area), instance = tonumber(inst), phase = tonumber(phase),
+                 kind = kind, entry = tonumber(entry), spawn = tonumber(spawn), name = name or "",
+                 time = date("%m-%d %H:%M"),
+                 -- the place is read from the client at capture time (a targeted creature is
+                 -- where you are, give or take): real zone (or instance) and sub-zone
+                 place = GetRealZoneText and GetRealZoneText() or "",
+                 sub = GetSubZoneText and GetSubZoneText() or "" }
+    end
+
+    -- "达拉然 - 紫罗兰城堡"; older points saved without a place show their map id.
+    local function Place(p)
+        local place = p.place or p.zoneName or ""
+        if place == "" then return DCL("map") .. " " .. p.map end
+        if p.sub and p.sub ~= "" and p.sub ~= place then place = place .. " - " .. p.sub end
+        return place
+    end
+
+    local function Label(p)
+        if p.note and p.note ~= "" then return p.note end
+        return Place(p)
+    end
+
+    local function Format(p, key)
+        if not p then return "" end
+        if key == "go" then
+            return string.format(".go xyz %.2f %.2f %.2f %d %.2f", p.x, p.y, p.z, p.map, p.o)
+        elseif key == "sql" then
+            return string.format("(%d, %.4f, %.4f, %.4f, %.4f)", p.map, p.x, p.y, p.z, p.o)
+        elseif key == "dc" then
+            return string.format("X = %.2ff, Y = %.2ff, Z = %.2ff, O = %.3ff; // map %d %s", p.x, p.y, p.z, p.o, p.map, Label(p))
+        elseif key == "move" then
+            if p.kind ~= "creature" or p.spawn == 0 then
+                return "-- " .. DCL("Select a creature first (Move NPC SQL needs a spawned creature).")
+            end
+            return string.format("UPDATE `creature` SET `position_x` = %.4f, `position_y` = %.4f, `position_z` = %.4f, `orientation` = %.4f WHERE `guid` = %d; -- %s (entry %d)",
+                p.x, p.y, p.z, p.o, p.spawn, p.name, p.entry)
+        end
+        return string.format("X %.4f Y %.4f Z %.4f O %.4f map %d", p.x, p.y, p.z, p.o, p.map)
+    end
+
+    local f = CreateFrame("Frame", "DungeonClearGpsFrame", UIParent)
+    f:SetSize(460, 384)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 140)
+    f:SetFrameStrata("DIALOG")
+    f:SetToplevel(true)
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    f:SetBackdropColor(0.03, 0.03, 0.05, 0.94)
+    f:SetBackdropBorderColor(0.20, 0.22, 0.28, 1.0)
+    f:Hide()
+    tinsert(UISpecialFrames, "DungeonClearGpsFrame")
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+    DCBind(title, "Coordinates")
+    title:SetTextColor(0.24, 0.60, 1.0)
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+
+    local info = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    info:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -38)
+    info:SetPoint("RIGHT", f, "RIGHT", -14, 0)
+    info:SetJustifyH("LEFT")
+
+    -- format row (fixed widths so the Chinese labels fit)
+    local fmtButtons = {}
+    for i, def in ipairs(FORMATS) do
+        local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        b:SetSize(def.width, 20)
+        if i == 1 then b:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -56)
+        else b:SetPoint("LEFT", fmtButtons[i - 1], "RIGHT", 3, 0) end
+        DCBind(b, def.label)
+        b:SetScript("OnClick", function() fmt = def.key; DB().format = fmt; Render() end)
+        b.key = def.key
+        fmtButtons[i] = b
+    end
+
+    -- the copy box and its Copy button
+    local box = CreateFrame("EditBox", "DungeonClearGpsEditBox", f, "InputBoxTemplate")
+    box:SetSize(358, 22)
+    box:SetPoint("TOPLEFT", f, "TOPLEFT", 18, -84)
+    box:SetAutoFocus(false)
+    box:SetFontObject(ChatFontNormal)
+    box:SetScript("OnEscapePressed", function(self) self:ClearFocus(); f:Hide() end)
+    box:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+    -- Keep the text what we put there: typing would only break the copy.
+    box:SetScript("OnTextChanged", function(self, userInput)
+        if userInput then Render() end
+    end)
+    local hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", box, "BOTTOMLEFT", -4, -4)
+    local hintUntil = 0
+
+    local function Hint(text, seconds)
+        hint:SetText(text)
+        hintUntil = seconds and (GetTime() + seconds) or 0
+    end
+    local function DefaultHint()
+        if CopyToClipboard then
+            Hint(DCL("Click Copy or press Ctrl+C. Esc closes."))
+        else
+            Hint(DCL("Already selected: press Ctrl+C to copy. Esc closes."))
+        end
+    end
+    f:SetScript("OnUpdate", function()
+        if hintUntil > 0 and GetTime() > hintUntil then hintUntil = 0; DefaultHint() end
+    end)
+
+    -- Copy `text`: straight to the clipboard when the client can, else select it in the box.
+    local function Copy(text)
+        if not text or text == "" then return end
+        if CopyToClipboard then
+            CopyToClipboard(text)
+            Hint("|cff33ff33" .. DCL("Copied to the clipboard.") .. "|r", 3)
+        else
+            box:SetText(text)
+            box:SetFocus()
+            box:HighlightText()
+            Hint("|cffffd100" .. DCL("This client cannot copy directly: press Ctrl+C.") .. "|r", 5)
+        end
+    end
+
+    local copyBtn = CreateFrame("Button", "DungeonClearGpsCopyButton", f, "UIPanelButtonTemplate")
+    copyBtn:SetSize(66, 22)
+    copyBtn:SetPoint("LEFT", box, "RIGHT", 6, 0)
+    DCBind(copyBtn, "Copy")
+    copyBtn:SetScript("OnClick", function() Copy(Format(current, fmt)) end)
+
+    -- history list: label row, filter, pager
+    local histLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    histLabel:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -134)
+    DCBind(histLabel, "Saved points (right-click for more)")
+    histLabel:SetTextColor(0.24, 0.60, 1.0)
+
+    local starOnly = CreateFrame("CheckButton", "DungeonClearGpsStarOnly", f, "UICheckButtonTemplate")
+    starOnly:SetSize(20, 20)
+    starOnly:SetPoint("TOPLEFT", f, "TOPLEFT", 196, -130)
+    local starOnlyText = starOnly:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    starOnlyText:SetPoint("LEFT", starOnly, "RIGHT", 0, 1)
+    DCBind(starOnlyText, "Starred only")
+    starOnly:SetScript("OnClick", function(self) DB().starOnly = self:GetChecked() and true or false; page = 1; Render() end)
+
+    local nextBtn = CreateFrame("Button", "DungeonClearGpsNextPage", f, "UIPanelButtonTemplate")
+    nextBtn:SetSize(24, 20)
+    nextBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -12, -130)
+    nextBtn:SetText(">")
+    nextBtn:SetScript("OnClick", function() page = page + 1; Render() end)
+    local pageText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    pageText:SetPoint("RIGHT", nextBtn, "LEFT", -4, 0)
+    local prevBtn = CreateFrame("Button", "DungeonClearGpsPrevPage", f, "UIPanelButtonTemplate")
+    prevBtn:SetSize(24, 20)
+    prevBtn:SetPoint("RIGHT", pageText, "LEFT", -4, 0)
+    prevBtn:SetText("<")
+    prevBtn:SetScript("OnClick", function() page = page - 1; Render() end)
+
+    local menuFrame = CreateFrame("Frame", "DungeonClearGpsMenu", UIParent, "UIDropDownMenuTemplate")
+
+    local function RemovePoint(p)
+        local h = DB().history
+        for i = #h, 1, -1 do if h[i] == p then table.remove(h, i) end end
+        if current == p then current = nil end
+    end
+
+    local function FormatName(key)
+        for _, d in ipairs(FORMATS) do if d.key == key then return DCL(d.label) end end
+        return key
+    end
+
+    local function ChatText(p)
+        return string.format("%s: %.2f %.2f %.2f map %d", Label(p), p.x, p.y, p.z, p.map)
+    end
+
+    StaticPopupDialogs["DUNGEONCLEAR_GPS_NOTE"] = {
+        text = "%s",
+        button1 = OKAY, button2 = CANCEL,
+        hasEditBox = 1, maxLetters = 60,
+        OnShow = function(self, data)
+            data = data or self.data
+            local eb = _G[self:GetName() .. "EditBox"]
+            if eb then eb:SetText(data and data.note or ""); eb:HighlightText() end
+        end,
+        OnAccept = function(self, data)
+            local eb = _G[self:GetName() .. "EditBox"]
+            if data and eb then data.note = eb:GetText(); Render() end
+        end,
+        EditBoxOnEnterPressed = function(self)
+            local parent = self:GetParent()
+            if parent.data then parent.data.note = self:GetText(); Render() end
+            parent:Hide()
+        end,
+        EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        timeout = 0, whileDead = true, hideOnEscape = true,
+    }
+
+    local function ShowPointMenu(p)
+        local copyAs = {}
+        for _, def in ipairs(FORMATS) do
+            copyAs[#copyAs + 1] = { text = DCL(def.label), notCheckable = true,
+                func = function() CloseDropDownMenus(); current = p; Copy(Format(p, def.key)); Render() end }
+        end
+        local inParty = GetNumPartyMembers and GetNumPartyMembers() > 0
+        local inRaid = GetNumRaidMembers and GetNumRaidMembers() > 0
+        local inGuild = IsInGuild and IsInGuild()
+        local function SendTo(channel)
+            return function() CloseDropDownMenus(); SendChatMessage(ChatText(p), channel) end
+        end
+        local chat = {
+            { text = DCL("Say"), notCheckable = true, func = SendTo("SAY") },
+            { text = DCL("Party"), notCheckable = true, disabled = not inParty, func = SendTo("PARTY") },
+            { text = DCL("Raid"), notCheckable = true, disabled = not inRaid, func = SendTo("RAID") },
+            { text = DCL("Guild"), notCheckable = true, disabled = not inGuild, func = SendTo("GUILD") },
+        }
+        local menu = {
+            { text = Label(p), isTitle = true, notCheckable = true },
+            { text = DCL("Copy") .. " (" .. FormatName(fmt) .. ")", notCheckable = true,
+              func = function() current = p; Copy(Format(p, fmt)); Render() end },
+            { text = DCL("Copy as"), notCheckable = true, hasArrow = true, menuList = copyAs },
+            { text = DCL("Teleport here (GM)"), notCheckable = true,
+              func = function() SendChatMessage(Format(p, "go"), "SAY") end },
+            { text = DCL("Rename / note..."), notCheckable = true,
+              func = function() StaticPopup_Show("DUNGEONCLEAR_GPS_NOTE", DCL("Note for this point:"), nil, p) end },
+            { text = p.star and DCL("Unstar") or DCL("Star"), notCheckable = true,
+              func = function() p.star = not p.star or nil; Render() end },
+            { text = DCL("Send to chat"), notCheckable = true, hasArrow = true, menuList = chat },
+            { text = "|cffff3333" .. DCL("Delete") .. "|r", notCheckable = true,
+              func = function() RemovePoint(p); Render() end },
+            { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
+        }
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
+    end
+
+    local function ShowPointTooltip(row)
+        local p = row.point
+        if not p then return end
+        GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+        GameTooltip:AddLine((p.star and "|cffffd100★|r " or "") .. Label(p))
+        if p.note and p.note ~= "" then GameTooltip:AddLine(Place(p), 0.8, 0.8, 0.8) end
+        GameTooltip:AddLine(string.format("X %.2f  Y %.2f  Z %.2f  O %.2f", p.x, p.y, p.z, p.o), 1, 0.82, 0)
+        GameTooltip:AddLine(string.format("%s %d  %s %d  %s %d", DCL("map"), p.map, DCL("zone"), p.zone or 0, DCL("area"), p.area or 0), 0.7, 0.7, 0.7)
+        if p.kind == "creature" then
+            GameTooltip:AddLine(string.format("%s (entry %d, spawn %d)", p.name, p.entry, p.spawn), 0.6, 0.9, 1)
+        elseif p.name and p.name ~= "" then
+            GameTooltip:AddLine(p.name, 0.6, 0.9, 1)
+        end
+        GameTooltip:AddLine(p.time or "", 0.6, 0.6, 0.6)
+        GameTooltip:AddLine(DCL("Left-click: show   Right-click: more"), 0.5, 0.5, 0.5)
+        GameTooltip:Show()
+    end
+
+    local rows = {}
+    for i = 1, PAGE_SIZE do
+        local r = CreateFrame("Button", nil, f)
+        r:SetSize(432, 18)
+        r:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -154 - (i - 1) * 18)
+        r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.text:SetAllPoints()
+        r.text:SetJustifyH("LEFT")
+        r:SetScript("OnClick", function(self, button)
+            if not self.point then return end
+            current = self.point
+            if button == "RightButton" then ShowPointMenu(self.point) end
+            Render()
+        end)
+        r:SetScript("OnEnter", ShowPointTooltip)
+        r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        rows[i] = r
+    end
+
+    local auto = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    auto:SetSize(22, 22)
+    auto:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 10, 6)
+    local autoText = auto:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    autoText:SetPoint("LEFT", auto, "RIGHT", 0, 1)
+    DCBind(autoText, "Open automatically on .gps")
+    auto:SetScript("OnClick", function(self) DB().autoPopup = self:GetChecked() and true or false end)
+    local clear = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    clear:SetSize(70, 20)
+    clear:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 8)
+    DCBind(clear, "Clear")
+    -- Starred points survive Clear: they are the ones worth keeping.
+    clear:SetScript("OnClick", function()
+        local h = DB().history
+        for i = #h, 1, -1 do if not h[i].star then table.remove(h, i) end end
+        if current and not current.star then current = nil end
+        page = 1
+        Render()
+    end)
+    clear:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(DCL("Clear the list (starred points are kept)."), 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    clear:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- DCGPS1B: send .gps for the player (the server answers with the [gps] line,
+    -- which lands back in this window). Target a creature first to capture it.
+    local capture = CreateFrame("Button", "DungeonClearGpsCaptureButton", f, "UIPanelButtonTemplate")
+    capture:SetSize(130, 22)
+    capture:SetPoint("RIGHT", clear, "LEFT", -6, 0)
+    DCBind(capture, "Capture position")
+    capture:SetScript("OnClick", function() SendChatMessage(".gps", "SAY") end)
+    capture:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(DCL("Sends .gps (GM). With a creature targeted, records the creature instead of you."), 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    capture:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    Render = function()
+        local g = DB()
+        for _, b in ipairs(fmtButtons) do
+            if b.key == fmt then b:LockHighlight() else b:UnlockHighlight() end
+        end
+        -- the list shown: everything, or starred only
+        local view = {}
+        for _, h in ipairs(g.history) do
+            if not g.starOnly or h.star then view[#view + 1] = h end
+        end
+        local pages = math.max(1, math.ceil(#view / PAGE_SIZE))
+        if page > pages then page = pages end
+        if page < 1 then page = 1 end
+
+        local p = current or view[1] or g.history[1]
+        current = p
+        if p then
+            local who = (p.kind == "creature") and string.format("%s (entry %d, spawn %d)", p.name, p.entry, p.spawn)
+                or (p.kind == "player" and p.name or p.kind)
+            info:SetText(string.format("|cffffd100%s|r  %s  |cff999999%s  %s %d|r",
+                Label(p), who, p.time or "", DCL("map"), p.map))
+        else
+            info:SetText("|cff999999" .. DCL("Type .gps in game (GM) to capture a point; select a creature to capture it instead.") .. "|r")
+        end
+        box:SetText(Format(p, fmt))
+        box:SetFocus()
+        box:HighlightText()
+        if hintUntil == 0 then DefaultHint() end
+
+        for i, r in ipairs(rows) do
+            local h = view[(page - 1) * PAGE_SIZE + i]
+            r.point = h
+            if h then
+                local mark = (h == p) and "|cff00ff00>|r" or " "
+                local star = h.star and "|cffffd100★|r" or " "
+                local who = (h.kind == "creature" and h.name ~= "") and ("  |cff99e6ff" .. h.name .. "|r") or ""
+                r.text:SetText(string.format("%s%s %s  %s  |cffffd100%.1f, %.1f, %.1f|r%s",
+                    mark, star, h.time or "", Label(h), h.x, h.y, h.z, who))
+                r:Show()
+            else
+                r:Hide()
+            end
+        end
+        pageText:SetText(string.format(DCL("Page %d/%d (%d)"), page, pages, #view))
+        if page > 1 then prevBtn:Enable() else prevBtn:Disable() end
+        if page < pages then nextBtn:Enable() else nextBtn:Disable() end
+        auto:SetChecked(g.autoPopup and true or false)
+        starOnly:SetChecked(g.starOnly and true or false)
+    end
+
+    f:SetScript("OnShow", function() Render() end)
+
+    local ev = CreateFrame("Frame")
+    ev:RegisterEvent("CHAT_MSG_SYSTEM")
+    ev:SetScript("OnEvent", function(_, _, msg)
+        if not msg or msg:sub(1, 5) ~= "[gps]" then return end
+        local p = Parse(msg)
+        if not p then return end
+        local g = DB()
+        table.insert(g.history, 1, p)
+        -- trim the oldest unstarred points beyond the cap
+        local unstarred = 0
+        for i = 1, #g.history do if not g.history[i].star then unstarred = unstarred + 1 end end
+        for i = #g.history, 1, -1 do
+            if unstarred <= MAX_HISTORY then break end
+            if not g.history[i].star then table.remove(g.history, i); unstarred = unstarred - 1 end
+        end
+        current = p
+        page = 1
+        if f:IsShown() then Render() elseif g.autoPopup then f:Show() end
+    end)
+
+    function DCGpsToggle()
+        if f:IsShown() then f:Hide() else f:Show() end
+    end
+    DCLoc.OnChange(function() if f:IsShown() then Render() end end)
+end)()
+
 -- Slash Command Registration
 SLASH_DUNGEONCLEAR1 = "/dc"
 SlashCmdList["DUNGEONCLEAR"] = function(msg)
@@ -4247,6 +4697,9 @@ SlashCmdList["DUNGEONCLEAR"] = function(msg)
         end
     elseif msg == "lang" then
         DCLoc.Toggle()
+    elseif msg == "gps" then
+        -- RebornWOW DCGPS1A: coordinate copy box
+        if DCGpsToggle then DCGpsToggle() end
     else
         -- Parse "/dc <sub> [param]" and send via addon message
         local subCmd, param = msg:match("^(%S+)%s*(.*)$")
@@ -4257,4 +4710,4 @@ SlashCmdList["DUNGEONCLEAR"] = function(msg)
 end
 
 -- Print loaded notice
-DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ffDungeonClear Addon v3.6-reborn11 loaded.|r Type /dc to toggle window, or see Interface > AddOns > DungeonClear.")
+DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ffDungeonClear Addon v3.6-reborn14 loaded.|r Type /dc to toggle window, or see Interface > AddOns > DungeonClear.")
