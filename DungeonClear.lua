@@ -3157,6 +3157,232 @@ end)()
     frame.dcInstResetBtn = btn
 end)()
 
+-- RebornWOW DCQ1A: continuous clear. Tick dungeons in a list; the server
+-- teleports the party into each in turn, runs the clear, resets it and moves on
+-- (wipe: revive and retry, the second failure skips; low bag space or
+-- durability pauses). Server side is the `queue` subcommand. Wrapped in a
+-- function so it adds no main-chunk locals.
+;(function()
+    local rows, listing = {}, nil
+    local state = { stage = "idle" }
+
+    local function Sel()
+        DungeonClearDB.queueSel = DungeonClearDB.queueSel or {}
+        return DungeonClearDB.queueSel
+    end
+
+    local f = CreateFrame("Frame", "DungeonClearQueueFrame", UIParent)
+    f:SetSize(300, 430)
+    f:SetPoint("CENTER", UIParent, "CENTER", 260, 0)
+    f:SetFrameStrata("DIALOG")
+    f:SetToplevel(true)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:SetClampedToScreen(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropColor(0.03, 0.03, 0.05, 0.92)
+    f:SetBackdropBorderColor(0.20, 0.22, 0.28, 1.0)
+    f:Hide()
+    tinsert(UISpecialFrames, "DungeonClearQueueFrame")
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+    title:SetTextColor(0.24, 0.60, 1.0)
+    DCBind(title, "Continuous clear")
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+
+    local hint = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    hint:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -36)
+    hint:SetWidth(272)
+    hint:SetJustifyH("LEFT")
+    DCBind(hint, "Tick dungeons, then Start. Party leader only; turn off Wait at boss for unattended runs.")
+
+    local scroll = CreateFrame("ScrollFrame", "DungeonClearQueueScroll", f, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -64)
+    scroll:SetSize(254, 250)
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetSize(254, 10)
+    scroll:SetScrollChild(content)
+
+    local status = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    status:SetPoint("TOPLEFT", scroll, "BOTTOMLEFT", 4, -8)
+    status:SetWidth(276)
+    status:SetJustifyH("LEFT")
+
+    local checks = {}
+    local function CountSelected()
+        local n, sel = 0, Sel()
+        for _, r in ipairs(rows) do if sel[r.token] then n = n + 1 end end
+        return n
+    end
+
+    local STAGES = {
+        idle = "Not running", prepare = "Checking bags and gear", arrive = "Teleporting",
+        start = "Starting the clear", run = "Clearing", reset = "Resetting", paused = "Paused", done = "All done",
+    }
+    local Render  -- forward
+
+    local function RenderList()
+        local sel = Sel()
+        for i, r in ipairs(rows) do
+            local cb = checks[i]
+            if not cb then
+                cb = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
+                cb:SetSize(22, 22)
+                cb:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(i - 1) * 22)
+                cb.text = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                cb.text:SetPoint("LEFT", cb, "RIGHT", 2, 1)
+                cb.text:SetWidth(222)
+                cb.text:SetJustifyH("LEFT")
+                cb:SetScript("OnClick", function(self)
+                    Sel()[self.token] = self:GetChecked() and true or nil
+                    Render()
+                end)
+                checks[i] = cb
+            end
+            cb.token = r.token
+            local lv = r.heroic > 0 and string.format("%d / H%d", r.level, r.heroic) or tostring(r.level)
+            local mark = (state.stage ~= "idle" and state.token == r.token) and "|cff33ff33> |r" or ""
+            cb.text:SetText(mark .. (DCLDungeon and DCLDungeon(r.name) or r.name) .. "  |cff999999(" .. DCL("Lv") .. " " .. lv .. ")|r")
+            cb:SetChecked(sel[r.token] and true or false)
+            cb:Show()
+        end
+        for i = #rows + 1, #checks do checks[i]:Hide() end
+        content:SetHeight(math.max(10, #rows * 22))
+    end
+
+    local startBtn, stopBtn, resumeBtn
+    Render = function()
+        RenderList()
+        local s = state.stage or "idle"
+        local line = DCL(STAGES[s] or s)
+        if s ~= "idle" and s ~= "done" and (tonumber(state.total) or 0) > 0 then
+            line = line .. "  " .. string.format(DCL("%d of %d"), tonumber(state.index) or 0, tonumber(state.total) or 0)
+            if (tonumber(state.fails) or 0) > 0 then
+                line = line .. "  " .. string.format(DCL("failed %d"), tonumber(state.fails))
+            end
+        end
+        if state.note and state.note ~= "" then line = line .. "\n|cffcccccc" .. state.note .. "|r" end
+        if s == "idle" or s == "done" then
+            line = line .. "\n" .. string.format(DCL("%d dungeon(s) ticked"), CountSelected())
+        end
+        status:SetText(line)
+        local running = (s ~= "idle" and s ~= "done")
+        if running then startBtn:Disable() else startBtn:Enable() end
+        if running then stopBtn:Enable() else stopBtn:Disable() end
+        if s == "paused" then resumeBtn:Enable() else resumeBtn:Disable() end
+    end
+
+    local function Button(label, w, x, onClick)
+        local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        b:SetSize(w, 22)
+        b:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", x, 12)
+        DCBind(b, label)
+        b:SetScript("OnClick", onClick)
+        return b
+    end
+
+    local function Start()
+        local tokens = {}
+        local sel = Sel()
+        for _, r in ipairs(rows) do if sel[r.token] then tokens[#tokens + 1] = r.token end end
+        if #tokens == 0 then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[DC] " .. DCL("Tick at least one dungeon.") .. "|r")
+            return
+        end
+        -- Addon messages are capped at 255 bytes: send the list in chunks, the
+        -- last one with "start".
+        local chunk = ""
+        for i, t in ipairs(tokens) do
+            local nextChunk = (chunk == "") and t or (chunk .. "," .. t)
+            if #nextChunk > 180 then
+                SendDcCommand("queue", "add\t" .. chunk)
+                chunk = t
+            else
+                chunk = nextChunk
+            end
+        end
+        SendDcCommand("queue", "start\t" .. chunk)
+    end
+
+    startBtn = Button("Start", 66, 12, Start)
+    stopBtn = Button("Stop", 66, 82, function() SendDcCommand("queue", "stop") end)
+    resumeBtn = Button("Resume", 66, 152, function() SendDcCommand("queue", "resume") end)
+    Button("Refresh", 66, 222, function() listing = {}; SendDcCommand("queue", "list") end)
+
+    local allBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    allBtn:SetSize(56, 18)
+    allBtn:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 12, 38)
+    DCBind(allBtn, "Clear")
+    allBtn:SetScript("OnClick", function() wipe(Sel()); Render() end)
+    local fitBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    fitBtn:SetSize(120, 18)
+    fitBtn:SetPoint("LEFT", allBtn, "RIGHT", 4, 0)
+    DCBind(fitBtn, "Tick my level")
+    fitBtn:SetScript("OnClick", function()
+        -- Normal-difficulty dungeons recommended within 5 levels below the player.
+        local me, sel = UnitLevel("player") or 80, Sel()
+        for _, r in ipairs(rows) do
+            if r.level <= me and r.level >= me - 5 then sel[r.token] = true end
+        end
+        Render()
+    end)
+
+    f:SetScript("OnShow", function()
+        listing = {}
+        SendDcCommand("queue", "list")
+        Render()
+    end)
+    DCLoc.OnChange(function() if f:IsShown() then Render() end end)
+
+    -- QROW / QLISTEND / QSTATE from the server.
+    function DCQueueOnAddon(parts)
+        local kind = parts[1]
+        if kind == "QROW" then
+            listing = listing or {}
+            listing[#listing + 1] = { token = parts[2], level = tonumber(parts[3]) or 0,
+                                      heroic = tonumber(parts[4]) or 0, name = parts[5] or parts[2] }
+        elseif kind == "QLISTEND" then
+            if listing then
+                table.sort(listing, function(a, b)
+                    if a.level ~= b.level then return a.level < b.level end
+                    return a.name < b.name
+                end)
+                rows = listing
+            end
+            listing = nil
+            if f:IsShown() then Render() end
+        elseif kind == "QSTATE" then
+            state = { stage = parts[2], index = parts[3], total = parts[4], token = parts[5],
+                      fails = parts[6], note = parts[7] }
+            if f:IsShown() then Render() end
+        end
+    end
+
+    local btn = CreateFrame("Button", "DungeonClearQueueButton", frame, "UIPanelButtonTemplate")
+    btn:SetSize(64, 20)
+    btn:SetPoint("LEFT", listLabel, "LEFT", 140, 0)
+    DCBind(btn, "Queue")
+    btn:SetScript("OnClick", function() if f:IsShown() then f:Hide() else f:Show() end end)
+    btn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(DCL("Continuous clear"), 1, 1, 1)
+        GameTooltip:AddLine(DCL("Run several dungeons in a row: teleport in, clear, reset, next."), 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame.dcQueueBtn = btn
+end)()
+
 local toggleBossesBtn = CreateFrame("Button", "DungeonClearToggleBossesButton", frame)
 toggleBossesBtn:SetSize(24, 24)
 toggleBossesBtn:SetPoint("LEFT", listLabel, "RIGHT", 6, 0)
@@ -3258,6 +3484,7 @@ UpdateLayout = function()
         listLabel:Hide()
         toggleBossesBtn:Hide()
         if frame.dcInstResetBtn then frame.dcInstResetBtn:Hide() end
+        if frame.dcQueueBtn then frame.dcQueueBtn:Hide() end
         scrollContainer:Hide()
         statusFrame:Hide()
 
@@ -3295,6 +3522,7 @@ UpdateLayout = function()
         listLabel:Show()
         toggleBossesBtn:Show()
         if frame.dcInstResetBtn then frame.dcInstResetBtn:Show() end
+        if frame.dcQueueBtn then frame.dcQueueBtn:Show() end
         statusFrame:Show()
 
         statusFrame:ClearAllPoints()
@@ -3502,6 +3730,9 @@ local function OnAddonMessage(prefix, message, channel, sender)
     elseif parts[1] and (parts[1]:sub(1, 2) == "TR" or parts[1]:sub(1, 2) == "TI") and DCTestOnAddon then
         -- Test-run list / bot gear for the test window (RebornWOW DCTEST2A).
         DCTestOnAddon(parts)
+    elseif (parts[1] == "QROW" or parts[1] == "QLISTEND" or parts[1] == "QSTATE") and DCQueueOnAddon then
+        -- Continuous-clear list and progress (RebornWOW DCQ1A).
+        DCQueueOnAddon(parts)
     elseif parts[1] == "SELFBOT" then
         -- Self-bot state for the auto-play row: "1 <role>" or "0".
         local was = selfBotUI and selfBotUI.role
