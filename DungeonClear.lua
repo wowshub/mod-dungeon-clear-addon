@@ -3127,6 +3127,36 @@ end)()
     DCLoc.OnChange(function() if f:IsShown() then Render() end end)
 end)()
 
+-- RebornWOW DCRST1A: one-click dungeon reset, on the boss-list caption row.
+-- Server side (`instreset`) moves everyone out, rebuilds an LFG group as a
+-- normal one with the same bots, then resets. Wrapped in a function so it adds
+-- no main-chunk locals (this file sits near Lua 5.1's 200-local limit).
+;(function()
+    StaticPopupDialogs["DUNGEONCLEAR_INSTRESET"] = {
+        text = DCL("Reset dungeon?") .. "\n\n" .. DCL("Everyone is moved out of the dungeon. A dungeon-finder group is rebuilt as a normal group with the same bots. Then the normal-difficulty dungeons are reset."),
+        button1 = YES, button2 = NO,
+        OnAccept = function() SendDcCommand("instreset") end,
+        timeout = 0, whileDead = 1, hideOnEscape = 1, preferredIndex = 3,
+    }
+    local btn = CreateFrame("Button", "DungeonClearInstResetButton", frame, "UIPanelButtonTemplate")
+    btn:SetSize(96, 20)
+    btn:SetPoint("LEFT", listLabel, "LEFT", 206, 0)
+    DCBind(btn, "Reset dungeon")
+    btn:SetScript("OnClick", function()
+        -- Rebuild the dialog text in the current language before showing it.
+        StaticPopupDialogs["DUNGEONCLEAR_INSTRESET"].text = DCL("Reset dungeon?") .. "\n\n" .. DCL("Everyone is moved out of the dungeon. A dungeon-finder group is rebuilt as a normal group with the same bots. Then the normal-difficulty dungeons are reset.")
+        StaticPopup_Show("DUNGEONCLEAR_INSTRESET")
+    end)
+    btn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(DCL("Reset dungeon"), 1, 1, 1)
+        GameTooltip:AddLine(DCL("Leader only, normal difficulty, nobody in combat or dead, clear stopped."), 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end)
+    btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame.dcInstResetBtn = btn
+end)()
+
 local toggleBossesBtn = CreateFrame("Button", "DungeonClearToggleBossesButton", frame)
 toggleBossesBtn:SetSize(24, 24)
 toggleBossesBtn:SetPoint("LEFT", listLabel, "RIGHT", 6, 0)
@@ -3227,6 +3257,7 @@ UpdateLayout = function()
         if selfBotUI then selfBotUI.show(false) end
         listLabel:Hide()
         toggleBossesBtn:Hide()
+        if frame.dcInstResetBtn then frame.dcInstResetBtn:Hide() end
         scrollContainer:Hide()
         statusFrame:Hide()
 
@@ -3263,6 +3294,7 @@ UpdateLayout = function()
         if selfBotUI then selfBotUI.show(true) end
         listLabel:Show()
         toggleBossesBtn:Show()
+        if frame.dcInstResetBtn then frame.dcInstResetBtn:Show() end
         statusFrame:Show()
 
         statusFrame:ClearAllPoints()
