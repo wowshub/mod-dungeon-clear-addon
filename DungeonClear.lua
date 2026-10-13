@@ -1607,12 +1607,20 @@ end
     listBox:EnableMouseWheel(true)
     local listOffset = 0
     local revealSelection = false  -- scroll the chosen dungeon into view on the next redraw
+    -- DCTEST5A/5B: a click on a row writes the token into the box; that must not run the
+    -- typing path (reset to the top + re-centre), or the list jumps under the mouse.
+    -- OnTextChanged from SetText arrives on a later frame in 3.3.5, so a flag set around
+    -- SetText is already gone by then. Remember the picked text instead, and pin the
+    -- picked dungeon to the row the mouse clicked on.
+    local pickedText = nil
+    local pin = nil  -- { token, pos }: keep this token at visible row `pos` on the next redraw
     local listRows = {}
     local filtered = {}
 
     for i = 1, ROWS do
         local r = CreateFrame("Button", nil, listBox)
         r:SetSize(318, ROW_H)
+        r.index = i
         r:SetPoint("TOPLEFT", listBox, "TOPLEFT", 6, -4 - (i - 1) * ROW_H)
         r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
         r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1620,6 +1628,8 @@ end
         r.text:SetJustifyH("LEFT")
         r:SetScript("OnClick", function(self)
             if self.row then
+                pickedText = self.row.token
+                pin = { token = self.row.token, pos = self.index }
                 dungeonBox:SetText(self.row.token)
                 dungeonBox:ClearFocus()
                 DB().token = self.row.token
@@ -1685,7 +1695,13 @@ end
         -- A chosen dungeon (an exact token) shows the whole list; keep it in sight, centred,
         -- instead of jumping back to the top. Only right after a choice, so the mouse wheel
         -- still scrolls freely.
-        if revealSelection then
+        if pin then
+            for i, row in ipairs(filtered) do
+                if row.token == pin.token then listOffset = i - pin.pos break end
+            end
+            pin = nil
+            revealSelection = false
+        elseif revealSelection then
             revealSelection = false
             for i, row in ipairs(filtered) do
                 if row.token == q and (i <= listOffset or i > listOffset + ROWS) then
@@ -1732,6 +1748,11 @@ end
     end)
     dungeonBox:SetScript("OnTextChanged", function(self)
         DB().token = self:GetText()
+        if pickedText and self:GetText() == pickedText then
+            pickedText = nil   -- our own click: the list was already pinned under the mouse
+            return
+        end
+        pickedText = nil
         listOffset = 0
         revealSelection = true
         RefreshDungeonList()
