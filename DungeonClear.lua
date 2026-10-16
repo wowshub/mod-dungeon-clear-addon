@@ -2239,30 +2239,6 @@ end
         memRows[i] = r
     end
 
-    -- DCGM1A: party-wide GM actions for the selected run.
-    local partyBtn = LButton(lf, "Party actions", 96, function()
-        local run = FindRun(selectedRun)
-        if not run then
-            out:AddMessage("|cffff3333" .. DCL("Select a running test first.") .. "|r")
-            return
-        end
-        local menu = {
-            { text = DCL("Party actions") .. ": " .. run.id, isTitle = true, notCheckable = true },
-            { text = DCL("Kill everyone who can resurrect"), notCheckable = true, func = function() GMBot(run, "rezzers", "die") end },
-            { text = DCL("Kill the healers"), notCheckable = true, func = function() GMBot(run, "healers", "die") end },
-            { text = DCL("Leave only the tank alive"), notCheckable = true, func = function() GMBot(run, "allbuttank", "die") end },
-            { text = DCL("Wipe the party"), notCheckable = true, func = function() GMBot(run, "all", "die") end },
-            { text = DCL("Resurrect everyone"), notCheckable = true, func = function() GMBot(run, "all", "rez") end },
-            { text = DCL("Tank invincible"), notCheckable = true, func = function() GMBot(run, "tank", "god", "on") end },
-            { text = DCL("Healers unlimited mana"), notCheckable = true, func = function() GMBot(run, "healers", "power", "on") end },
-            { text = DCL("Whole party invincible"), notCheckable = true, func = function() GMBot(run, "all", "god", "on") end },
-            { text = DCL("Clear all cheats"), notCheckable = true, func = function() GMBot(run, "all", "clear") end },
-            { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
-        }
-        EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
-    end)
-    partyBtn:SetPoint("BOTTOMRIGHT", memBox, "TOPRIGHT", 0, 2)
-
     -- gear -----------------------------------------------------------------
     local gearTop = -58 - RUN_ROWS * RUN_H - 32 - VIEW_H - (MEM_ROWS * MEM_H + 8) - 8
     local gearLabel = LText(lf, "GameFontNormal", nil, 14, gearTop)
@@ -2435,6 +2411,32 @@ end
         }
         EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
     end
+
+    -- DCGM1A: party-wide GM actions for the selected run.
+    -- DCGM1A2: created here, after FindRun / runMenuFrame / GMBot exist -- above them
+    -- the click handler saw those names as (nil) globals.
+    local partyBtn = LButton(lf, "Party actions", 96, function()
+        local run = FindRun(selectedRun)
+        if not run then
+            out:AddMessage("|cffff3333" .. DCL("Select a running test first.") .. "|r")
+            return
+        end
+        local menu = {
+            { text = DCL("Party actions") .. ": " .. run.id, isTitle = true, notCheckable = true },
+            { text = DCL("Kill everyone who can resurrect"), notCheckable = true, func = function() GMBot(run, "rezzers", "die") end },
+            { text = DCL("Kill the healers"), notCheckable = true, func = function() GMBot(run, "healers", "die") end },
+            { text = DCL("Leave only the tank alive"), notCheckable = true, func = function() GMBot(run, "allbuttank", "die") end },
+            { text = DCL("Wipe the party"), notCheckable = true, func = function() GMBot(run, "all", "die") end },
+            { text = DCL("Resurrect everyone"), notCheckable = true, func = function() GMBot(run, "all", "rez") end },
+            { text = DCL("Tank invincible"), notCheckable = true, func = function() GMBot(run, "tank", "god", "on") end },
+            { text = DCL("Healers unlimited mana"), notCheckable = true, func = function() GMBot(run, "healers", "power", "on") end },
+            { text = DCL("Whole party invincible"), notCheckable = true, func = function() GMBot(run, "all", "god", "on") end },
+            { text = DCL("Clear all cheats"), notCheckable = true, func = function() GMBot(run, "all", "clear") end },
+            { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
+        }
+        EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
+    end)
+    partyBtn:SetPoint("BOTTOMRIGHT", memBox, "TOPRIGHT", 0, 2)
 
     -- DCTEST4C: camera row. Follow the selected run's tank, step through its bots,
     -- fly free (god view), or end the watch and go back where you were.
