@@ -2239,6 +2239,30 @@ end
         memRows[i] = r
     end
 
+    -- DCGM1A: party-wide GM actions for the selected run.
+    local partyBtn = LButton(lf, "Party actions", 96, function()
+        local run = FindRun(selectedRun)
+        if not run then
+            out:AddMessage("|cffff3333" .. DCL("Select a running test first.") .. "|r")
+            return
+        end
+        local menu = {
+            { text = DCL("Party actions") .. ": " .. run.id, isTitle = true, notCheckable = true },
+            { text = DCL("Kill everyone who can resurrect"), notCheckable = true, func = function() GMBot(run, "rezzers", "die") end },
+            { text = DCL("Kill the healers"), notCheckable = true, func = function() GMBot(run, "healers", "die") end },
+            { text = DCL("Leave only the tank alive"), notCheckable = true, func = function() GMBot(run, "allbuttank", "die") end },
+            { text = DCL("Wipe the party"), notCheckable = true, func = function() GMBot(run, "all", "die") end },
+            { text = DCL("Resurrect everyone"), notCheckable = true, func = function() GMBot(run, "all", "rez") end },
+            { text = DCL("Tank invincible"), notCheckable = true, func = function() GMBot(run, "tank", "god", "on") end },
+            { text = DCL("Healers unlimited mana"), notCheckable = true, func = function() GMBot(run, "healers", "power", "on") end },
+            { text = DCL("Whole party invincible"), notCheckable = true, func = function() GMBot(run, "all", "god", "on") end },
+            { text = DCL("Clear all cheats"), notCheckable = true, func = function() GMBot(run, "all", "clear") end },
+            { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
+        }
+        EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
+    end)
+    partyBtn:SetPoint("BOTTOMRIGHT", memBox, "TOPRIGHT", 0, 2)
+
     -- gear -----------------------------------------------------------------
     local gearTop = -58 - RUN_ROWS * RUN_H - 32 - VIEW_H - (MEM_ROWS * MEM_H + 8) - 8
     local gearLabel = LText(lf, "GameFontNormal", nil, 14, gearTop)
@@ -2381,15 +2405,32 @@ end
         EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
     end
 
+    -- DCGM1A: GM interventions on a running test's bots (.dc test bot).
+    local function GMBot(run, who, action, arg)
+        Send(".dc test bot " .. run.id .. " " .. who .. " " .. action .. (arg and (" " .. arg) or ""))
+        capture.relistAt = GetTime() + 1
+    end
+
     function DCTestShowMemberMenu(m)
         local run = FindRun(selectedRun)
         if not run then return end
+        local god = m.cheat and m.cheat:find("g", 1, true) and true or false
+        local pow = m.cheat and m.cheat:find("p", 1, true) and true or false
         local menu = {
             { text = m.name, isTitle = true, notCheckable = true },
             { text = DCL("Follow this bot (camera)"), notCheckable = true, func = function() FollowBot(run, m.name) end },
             { text = DCL("Details (gear, stats, talents)"), notCheckable = true, func = function() if DCTestInspect then DCTestInspect(m.name) end end },
             { text = DCL("Show its gear"), notCheckable = true, func = function() SendDcCommand("testgear", m.name, true) end },
             { text = DCL("Teleport next to it (.appear)"), notCheckable = true, func = function() Send(".appear " .. m.name) end },
+            { text = DCL("GM actions"), isTitle = true, notCheckable = true },
+            { text = DCL("Kill"), notCheckable = true, func = function() GMBot(run, m.name, "die") end },
+            { text = DCL("Resurrect"), notCheckable = true, func = function() GMBot(run, m.name, "rez") end },
+            { text = DCL("Invincible"), checked = god, keepShownOnClick = false,
+              func = function() GMBot(run, m.name, "god", god and "off" or "on") end },
+            { text = DCL("Unlimited mana / energy"), checked = pow, keepShownOnClick = false,
+              func = function() GMBot(run, m.name, "power", pow and "off" or "on") end },
+            { text = DCL("Teleport to the tank"), notCheckable = true, func = function() GMBot(run, m.name, "tele") end },
+            { text = DCL("Clear its cheats"), notCheckable = true, func = function() GMBot(run, m.name, "clear") end },
             { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
         }
         EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
@@ -2465,6 +2506,9 @@ end
                 local hp = m.alive and (m.hp .. "%") or ("|cffff3333" .. DCL("dead") .. "|r")
                 local mp = (m.mp >= 0) and ("  " .. DCL("MP") .. " " .. m.mp .. "%") or ""
                 local fight = m.combat and " |cffff6600*|r" or ""
+                -- DCGM1A: active GM cheats on this bot.
+                if m.cheat:find("g", 1, true) then fight = fight .. " |cffffd100[" .. DCL("God") .. "]|r" end
+                if m.cheat:find("p", 1, true) then fight = fight .. " |cff3da6ff[" .. DCL("Inf. MP") .. "]|r" end
                 r.text:SetText(string.format("|cffffd100%s|r  %s%s|r  %s %d  %s %d  %s %s%s%s",
                     role, color, m.name, DCL("Lv"), m.level, DCL("iLvl"), m.ilvl, DCL("HP"), hp, mp, fight))
                 r:Show()
@@ -2627,6 +2671,7 @@ end
                         level = tonumber(parts[6]) or 0, ilvl = tonumber(parts[7]) or 0,
                         hp = tonumber(parts[8]) or 0, mp = tonumber(parts[9]) or -1,
                         alive = parts[10] == "1", combat = parts[11] == "1",
+                        cheat = parts[13] or "",  -- DCGM1A: "g" god, "p" unlimited power
                     }
                 end
             end
