@@ -2118,6 +2118,24 @@ end
     local pending, gearPending = nil, nil
     local info, infoPending = nil, nil   -- DCTEST3A run stats: { id, kills, deaths }
     local bottomMode = "gear"            -- what the bottom box shows: "gear" | "stats"
+    -- DCTEST6A: finished runs stay in the list (saved per account, newest first) until
+    -- the GM deletes them; the server also re-sends its last 20 with the outcome.
+    local finPending, shownCount = nil, 0
+    local function History()
+        local t = DB()
+        t.history = t.history or {}
+        t.historyDeleted = t.historyDeleted or {}
+        return t.history, t.historyDeleted
+    end
+    local function HistFind(id)
+        for _, h in ipairs((History())) do if h.id == id then return h end end
+    end
+    -- test verdict tokens (DcTestRun::VerdictName) for finished runs.
+    local RESULT_NAMES = {
+        disabled = "Run disabled", wipe = "Party wiped", paused_timeout = "Paused too long",
+        stalled_timeout = "Stuck too long", no_progress = "No progress", overall_timeout = "Took too long",
+        aborted = "Stopped", setup_failed = "Setup failed", lab_done = "Lab done",
+    }
     local pendingFollow = nil            -- { name, at }: follow a bot once the watch has landed
 
     -- DCTEST4A: the concurrent-run cap, settable here (GM; in memory until restart).
@@ -2191,7 +2209,7 @@ end
         runRows[i] = r
     end
     runBox:SetScript("OnMouseWheel", function(_, delta)
-        runOffset = math.max(0, math.min(runOffset - delta, #runs - RUN_ROWS))
+        runOffset = math.max(0, math.min(runOffset - delta, shownCount - RUN_ROWS))
         RenderRuns()
     end)
 
@@ -2290,7 +2308,7 @@ end
     end
 
     local function RenderStats()
-        local run = info and FindRun(info.id)
+        local run = info and (FindRun(info.id) or HistFind(info.id))
         gearBox:Show()
         for _, c in ipairs(gearCells) do c:Hide() end
         statsBox:Show()
@@ -2328,6 +2346,15 @@ end
 
     -- The same test again: same dungeon, difficulty, seed (= same party) and gear.
     local function ReplayCommand(run)
+        -- DCTEST6A: a "my characters" run replays the same characters (party=, in comp order).
+        if run.roster then
+            local names = {}
+            for _, c in ipairs(run.comp or {}) do names[#names + 1] = c.name end
+            if #names == 0 then for _, m in ipairs(run.members or {}) do names[#names + 1] = m.name end end
+            if #names > 0 then
+                return ".dc test start " .. run.token .. " party=" .. table.concat(names, ",") .. (run.heroic and " heroic" or "")
+            end
+        end
         local cmd = ".dc test start " .. run.token
         if run.seed and run.seed > 0 then cmd = cmd .. " seed=" .. run.seed end
         if run.gearIlvl and run.gearIlvl > 0 then cmd = cmd .. " ilvl=" .. run.gearIlvl end
@@ -2347,7 +2374,58 @@ end
         end
     end
 
+    -- DCTEST6A: copy a run's settings into the start panel on the left.
+    local function CopySettings(run)
+        local t = DB()
+        t.token, t.heroic, t.mode = run.token, run.heroic, "random"
+        t.ilvl = (run.gearIlvl or 0) > 0 and tostring(run.gearIlvl) or ""
+        t.seed = (run.seed or 0) > 0 and tostring(run.seed) or ""
+        t.quality = ({ [2] = 2, [3] = 3, [4] = 4 })[run.gearQuality or 0] or 1
+        tf:Hide(); tf:Show()
+    end
+
+    -- DCTEST6A: right-click menu of a finished run.
+    local function ShowFinishedMenu(run)
+        local menu = {
+            { text = DungeonName(run.token) .. (run.heroic and (" " .. DCL("(Heroic)")) or "") .. "  |cff999999" .. DCL("Finished") .. "|r",
+              isTitle = true, notCheckable = true },
+            { text = DCL("Run stats"), notCheckable = true, func = function()
+                selectedRun = run.id
+                if run.kills then
+                    info = { id = run.id, kills = run.kills, deaths = run.deathLog or {} }
+                    bottomMode = "stats"
+                    RenderRuns()
+                else
+                    SendDcCommand("testinfo", run.id, true)
+                end
+            end },
+            { text = DCL("Run it again (same seed and gear)"), notCheckable = true,
+              func = function() Send(ReplayCommand(run)); capture.relistAt = GetTime() + 4 end },
+            { text = DCL("Copy its settings to the left"), notCheckable = true, func = function() CopySettings(run) end },
+            { text = "|cffff3333" .. DCL("Delete this record") .. "|r", notCheckable = true, func = function()
+                local hist, deleted = History()
+                for i = #hist, 1, -1 do if hist[i].id == run.id then table.remove(hist, i) end end
+                deleted[run.id] = true
+                if selectedRun == run.id then selectedRun = nil end
+                if info and info.id == run.id then info = nil; bottomMode = "gear" end
+                RenderRuns()
+            end },
+            { text = DCL("Delete all finished records"), notCheckable = true, func = function()
+                StaticPopup_Show("DUNGEONCLEAR_TEST_STOPONE", DCL("Delete all finished test records?"), nil, function()
+                    local hist, deleted = History()
+                    for _, h in ipairs(hist) do deleted[h.id] = true end
+                    wipe(hist)
+                    if info and not FindRun(info.id) then info = nil; bottomMode = "gear" end
+                    RenderRuns()
+                end)
+            end },
+            { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
+        }
+        EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
+    end
+
     function DCTestShowRunMenu(run)
+        if run.finished then return ShowFinishedMenu(run) end
         local follow = {}
         for _, m in ipairs(run.members) do
             follow[#follow + 1] = { text = m.name, notCheckable = true,
@@ -2361,16 +2439,9 @@ end
               disabled = #follow == 0 },
             { text = DCL("Run stats"), notCheckable = true,
               func = function() SendDcCommand("testinfo", run.id, true) end },
-            { text = DCL("Run it again (same seed and gear)"), notCheckable = true, disabled = run.roster,
+            { text = DCL("Run it again (same seed and gear)"), notCheckable = true,
               func = function() Send(ReplayCommand(run)) end },
-            { text = DCL("Copy its settings to the left"), notCheckable = true, func = function()
-                local t = DB()
-                t.token, t.heroic, t.mode = run.token, run.heroic, "random"
-                t.ilvl = (run.gearIlvl or 0) > 0 and tostring(run.gearIlvl) or ""
-                t.seed = (run.seed or 0) > 0 and tostring(run.seed) or ""
-                t.quality = ({ [2] = 2, [3] = 3, [4] = 4 })[run.gearQuality or 0] or 1
-                tf:Hide(); tf:Show()
-            end },
+            { text = DCL("Copy its settings to the left"), notCheckable = true, func = function() CopySettings(run) end },
             { text = "|cffff3333" .. DCL("Stop this test") .. "|r", notCheckable = true, func = function()
                 StaticPopup_Show("DUNGEONCLEAR_TEST_STOPONE",
                     string.format(DCL("Stop the test run %s (%s)?"), run.id, DungeonName(run.token)), nil,
@@ -2489,6 +2560,7 @@ end
     RenderMembers = function()
         local run
         for _, r in ipairs(runs) do if r.id == selectedRun then run = r end end
+        if not run and selectedRun then run = HistFind(selectedRun) end  -- DCTEST6A
         if not run then
             memLabel:SetText(DCL("Party"))
             for _, r in ipairs(memRows) do r:Hide() end
@@ -2505,7 +2577,7 @@ end
                 local cc = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
                 local color = cc and string.format("|cff%02x%02x%02x", cc.r * 255, cc.g * 255, cc.b * 255) or "|cffcccccc"
                 local role = DCL(ROLE_TAGS[m.role] or m.role)
-                local hp = m.alive and (m.hp .. "%") or ("|cffff3333" .. DCL("dead") .. "|r")
+                local hp = run.finished and "--" or (m.alive and (m.hp .. "%") or ("|cffff3333" .. DCL("dead") .. "|r"))
                 local mp = (m.mp >= 0) and ("  " .. DCL("MP") .. " " .. m.mp .. "%") or ""
                 local fight = m.combat and " |cffff6600*|r" or ""
                 -- DCGM1A: active GM cheats on this bot.
@@ -2558,16 +2630,42 @@ end
             capText = " / " .. DCL("limit") .. " " .. (cap.value == 0 and DCL("unlimited") or cap.value)
             if cap.over then capText = capText .. " |cffffd100(" .. DCL("conf") .. " " .. (cap.conf == 0 and DCL("unlimited") or cap.conf) .. ")|r" end
         end
+        -- DCTEST6A: live runs first, then the finished ones (newest first).
+        local shown = {}
+        for _, r in ipairs(runs) do shown[#shown + 1] = r end
+        for _, h in ipairs((History())) do shown[#shown + 1] = h end
+        shownCount = #shown
+        local finCount = #shown - #runs
         lCount:SetWidth(196)
-        lCount:SetText(DCL("Running:") .. " " .. #runs .. capText)
+        lCount:SetText(DCL("Running:") .. " " .. #runs .. capText ..
+            (finCount > 0 and ("  |cff999999" .. DCL("Finished") .. " " .. finCount .. "|r") or ""))
         local found = false
-        for _, r in ipairs(runs) do if r.id == selectedRun then found = true end end
-        if not found then selectedRun = runs[1] and runs[1].id or nil end
-        runOffset = math.max(0, math.min(runOffset, #runs - RUN_ROWS))
+        for _, r in ipairs(shown) do if r.id == selectedRun then found = true end end
+        if not found then selectedRun = shown[1] and shown[1].id or nil end
+        runOffset = math.max(0, math.min(runOffset, #shown - RUN_ROWS))
         for i, row in ipairs(runRows) do
-            local run = runs[i + runOffset]
+            local run = shown[i + runOffset]
             row.run = run
-            if run then
+            if run and run.finished then
+                local heroic = run.heroic and (" |cffff8000" .. DCL("(Heroic)") .. "|r") or ""
+                local res = run.result == "success" and ("|cff00ff00" .. DCL("Passed") .. "|r")
+                    or (run.result and run.result ~= "") and ("|cffff3333" .. DCL(RESULT_NAMES[run.result] or run.result) .. "|r")
+                    or ("|cff999999" .. DCL("Result unknown") .. "|r")
+                local extra = ""
+                if (run.regroups or 0) > 0 then extra = extra .. "  |cffff8000" .. DCL("Entrance revives") .. " " .. run.regroups .. "|r" end
+                if (run.cheats or 0) > 0 then extra = extra .. "  |cffffd100" .. DCL("GM actions") .. " " .. run.cheats .. "|r" end
+                row.l1:SetText(string.format("|cff999999%s|r  |cffffd100%s|r%s  %s  %s %d/%d  %s %d%s",
+                    DCL("Finished"), DungeonName(run.token), heroic, res, DCL("Bosses"), run.killed or 0, run.total or 0,
+                    DCL("Deaths"), run.deaths or 0, extra))
+                local d = DCL("Time") .. " " .. Clock(run.elapsed or 0)
+                if run.endedAt and run.endedAt > 0 then d = d .. "  " .. date("%m-%d %H:%M", run.endedAt) end
+                if run.reason and run.reason ~= "" then d = d .. "  |cffff3333" .. run.reason .. "|r" end
+                row.l2:SetText(d)
+                row.watch:Hide()
+                if run.id == selectedRun then row:LockHighlight() else row:UnlockHighlight() end
+                row:Show()
+            elseif run then
+                row.watch:Show()
                 local mark = run.watching and ("|cff00ff00" .. DCL("Watching") .. "|r  ") or ""
                 local heroic = run.heroic and (" |cffff8000" .. DCL("(Heroic)") .. "|r") or ""
                 local stage = DCL(STAGES[run.stage] or run.stage)
@@ -2597,14 +2695,12 @@ end
                 row:Hide()
             end
         end
-        if #runs == 0 then
+        if #shown == 0 then
             runRows[1].run = nil
             runRows[1].l1:SetText("|cff999999" .. DCL("No test run is running. Start one on the left.") .. "|r")
             runRows[1].l2:SetText("")
             runRows[1].watch:Hide()
             runRows[1]:Show()
-        else
-            runRows[1].watch:Show()
         end
         RenderMembers()
         RenderGear()
@@ -2626,6 +2722,7 @@ end
         end
         if kind == "TR_START" then
             pending = {}
+            finPending = {}
             if parts[3] then
                 cap.value, cap.conf, cap.over = tonumber(parts[3]) or 0, tonumber(parts[4]) or 0, parts[5] == "1"
             end
@@ -2661,6 +2758,8 @@ end
                 onBoss = parts[4] == "1", by = parts[5] or "" }
         elseif kind == "TI_END" and infoPending then
             info, infoPending = infoPending, nil
+            local h = HistFind(info.id)  -- DCTEST6A: keep the stats with the finished record
+            if h then h.kills, h.deathLog = info.kills, info.deaths end
             bottomMode = "stats"
             if lf:IsShown() then RenderGear() end
         elseif kind == "TI_ERR" then
@@ -2677,7 +2776,74 @@ end
                     }
                 end
             end
+        elseif kind == "TRF" and finPending then
+            finPending[#finPending + 1] = {
+                id = parts[2], token = parts[3], heroic = parts[4] == "1", result = parts[5] or "",
+                elapsed = tonumber(parts[6]) or 0, killed = tonumber(parts[7]) or 0, total = tonumber(parts[8]) or 0,
+                deaths = tonumber(parts[9]) or 0, regroups = tonumber(parts[10]) or 0, cheats = tonumber(parts[11]) or 0,
+                level = tonumber(parts[12]) or 0, seed = tonumber(parts[13]) or 0, gearIlvl = tonumber(parts[14]) or 0,
+                gearQuality = tonumber(parts[15]) or 0, roster = parts[16] == "1", comp = {},
+            }
+        elseif kind == "TRFC" and finPending then
+            for _, f in ipairs(finPending) do
+                if f.id == parts[2] then
+                    for name, role, cls, lvl in (parts[3] or ""):gmatch("([^:,]+):([^:,]*):([^:,]*):(%d*)") do
+                        f.comp[#f.comp + 1] = { name = name, role = role, className = cls, level = tonumber(lvl) or 0 }
+                    end
+                end
+            end
+        elseif kind == "TRFR" and finPending then
+            for _, f in ipairs(finPending) do
+                if f.id == parts[2] then f.endedAt, f.reason = tonumber(parts[3]) or 0, parts[4] or "" end
+            end
         elseif kind == "TR_END" and pending then
+            -- DCTEST6A: a run that left the live list keeps its last party snapshot; the
+            -- server's finished records then fill in the outcome.
+            local hist, deleted = History()
+            for _, old in ipairs(runs) do
+                local still = false
+                for _, r in ipairs(pending) do if r.id == old.id then still = true end end
+                if not still and not deleted[old.id] and not HistFind(old.id) then
+                    local mem = {}
+                    for _, m in ipairs(old.members or {}) do
+                        mem[#mem + 1] = { name = m.name, class = m.class, role = m.role, level = m.level, ilvl = m.ilvl,
+                                          hp = 0, mp = -1, alive = true, combat = false, cheat = "" }
+                    end
+                    table.insert(hist, 1, { id = old.id, finished = true, token = old.token, heroic = old.heroic,
+                        level = old.level, seed = old.seed, gearIlvl = old.gearIlvl, gearQuality = old.gearQuality,
+                        roster = old.roster, comp = old.comp, killed = old.killed, total = old.total,
+                        deaths = old.deaths, pulls = old.pulls, elapsed = old.elapsed, members = mem,
+                        result = "", endedAt = time() })
+                end
+            end
+            for i = #(finPending or {}), 1, -1 do
+                local f = finPending[i]
+                if not deleted[f.id] then
+                    local h = HistFind(f.id)
+                    if not h then
+                        h = { id = f.id, finished = true, members = {} }
+                        table.insert(hist, 1, h)
+                    end
+                    for _, k in ipairs({ "token", "heroic", "result", "elapsed", "killed", "total", "deaths", "regroups",
+                                         "cheats", "level", "seed", "gearIlvl", "gearQuality", "roster", "endedAt", "reason" }) do
+                        if f[k] ~= nil then h[k] = f[k] end
+                    end
+                    if #f.comp > 0 then h.comp = f.comp end
+                    if #h.members == 0 then
+                        for _, c in ipairs(f.comp) do
+                            local cls = 0
+                            for id, tok in pairs(CLASS_TOKENS) do
+                                if tok:lower() == (c.className or ""):lower():gsub("[%s_]", "") then cls = id end
+                            end
+                            h.members[#h.members + 1] = { name = c.name, class = cls, role = c.role, level = c.level,
+                                                          ilvl = 0, hp = 0, mp = -1, alive = true, combat = false, cheat = "" }
+                        end
+                    end
+                end
+            end
+            finPending = nil
+            table.sort(hist, function(a, b) return (a.endedAt or 0) > (b.endedAt or 0) end)
+            while #hist > 50 do table.remove(hist) end
             runs, pending = pending, nil
             -- The server knows which run you sit in; that survives a /reload, the flag does not.
             for _, r in ipairs(runs) do if r.watching then DCTestWatchActive = true end end
