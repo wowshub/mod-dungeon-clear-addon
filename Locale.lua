@@ -326,6 +326,62 @@ local zh = {
     ["Stopped"] = "手动停止",
     ["Setup failed"] = "准备失败",
     ["Lab done"] = "实验完成",
+    -- DCCHAT1F
+    ["My commands"] = "只看我的命令",
+    ["Everything"] = "全部聊天",
+    ["Only the commands you type (in the chat box or in this panel) and what they print. No bot or player talk, nothing printed by other tools."] =
+        "只显示你输入的命令（在聊天框里或在这个面板里输入的）和它显示出来的内容。没有机器人和玩家说话，也没有其他工具打印的内容。",
+    ["Everything the chat box shows, plus your commands. Lines that are not yours use the colour on the right."] =
+        "聊天框里显示的所有内容，加上你的命令。不是你的那些行用右边选的颜色。",
+    ["Colour of the lines that are not your commands (click to cycle). Only used in 'Everything'. Gray stays out of the way; red looks like an error and is tiring to read."] =
+        "不是你的命令的那些行的颜色（点击切换），只在「全部聊天」里用。默认灰色：不抢眼；红色看起来像报错，长时间看很累。",
+    ["Other chat: Orange"] = "其他聊天颜色：橙",
+    ["Other chat: Purple"] = "其他聊天颜色：紫",
+    -- DCCHAT1E
+    ["Hide:"] = "屏蔽词：",
+    ["Lines containing any of these words (separate them with commas) are not recorded. Use it to hide the noise of other tools. Capital letters do not matter."] =
+        "含有这些词的行不会被记录（多个词用逗号隔开，不分大小写）。用来屏蔽其他工具刷屏的内容，比如自动发命令的测试工具。",
+    -- DCCHAT1B
+    ["Wheel scrolls (Shift = page). Type a command in the box below. Select mode lets you mark text with the mouse."] = "滚轮上下翻（按住 Shift 翻一页）。在下面的输入框里直接输入命令。需要用鼠标选中文字时点【选中模式】。",
+    ["%d lines"] = "%d 行",
+    ["Show: my commands only"] = "显示：只看我输入的命令",
+    ["Show: everything"] = "显示：全部（含聊天）",
+    ["Other chat: Gray"] = "其他聊天颜色：灰",
+    ["Other chat: Red"] = "其他聊天颜色：红",
+    ["Other chat: Green"] = "其他聊天颜色：绿",
+    ["Other chat: Blue"] = "其他聊天颜色：蓝",
+    ["Other chat: Yellow"] = "其他聊天颜色：黄",
+    ["Other chat: White"] = "其他聊天颜色：白",
+    ["Click to switch. 'My commands only': the commands you type and what they print. 'Everything': also all chat and other system lines, in the colour on the right."] =
+        "点击切换。「只看我输入的命令」：只显示你输入的命令和它显示出来的内容，没有机器人和玩家说话，也没有其他插件自动发的命令。「全部」：再加上所有聊天和其他系统消息，用右边选的颜色显示。",
+    ["Colour of the lines that are not your commands (click to cycle). Gray stays out of the way; red looks like an error and is tiring to read."] =
+        "不是你输入的命令的那些行的颜色（点击切换）。默认灰色：不抢眼；红色看起来像报错，长时间看很累。",
+    ["Copy every line shown."] = "复制现在显示的全部内容。",
+    ["The command you typed last and everything it printed."] = "你最后输入的那条命令，和它显示出来的全部内容。",
+    ["Show the lines as plain text you can mark with the mouse and copy with Ctrl+C."] = "把内容换成纯文字，可以用鼠标选中后按 Ctrl+C 复制。",
+    ["Command (starts with . or /), Enter sends, Esc or a click outside leaves the box:"] = "在这里输入命令（以 . 或 / 开头），回车发送；按 Esc 或点一下面板外面就退出输入：",
+    ["Select mode"] = "选中模式",
+    ["Back to view"] = "返回彩色视图",
+    ["Scroll to latest"] = "回到最新",
+    -- DCCHAT1A
+    ["Chat log"] = "聊天记录",
+    ["Select lines with the mouse and press Ctrl+C, or use the buttons below."] = "用鼠标选中文字后按 Ctrl+C，或用下面的按钮复制。",
+    ["Nothing to copy yet."] = "还没有内容可以复制。",
+    ["Copy all"] = "复制全部",
+    ["Copy last command"] = "复制上一条命令输出",
+    ["The command you typed last (a line starting with a dot) and everything printed after it."] = "你最后输入的命令（以点开头的那一行）以及之后显示的全部内容。",
+    ["No command found. Type a command starting with a dot first."] = "没有找到命令，请先输入一条以点开头的命令。",
+    ["Select all"] = "全选",
+    ["Also record chat"] = "同时记录聊天",
+    ["Say, yell, party, raid, guild, whispers, channels and NPC speech, besides system messages and your commands."] = "除了系统消息和你输入的命令，也记录说话、喊话、队伍、团队、公会、密语、频道和 NPC 对话。",
+    ["Pause recording"] = "暂停记录",
+    ["Command output and chat lines in a box you can copy from. Also /dc chat."] = "把命令输出和聊天内容放进可以复制的框里。也可以输入 /dc chat 打开。",
+    ["Yell"] = "喊",
+    ["Whisper from"] = "密语自",
+    ["Whisper to"] = "密语给",
+    ["Channel"] = "频道",
+    ["NPC"] = "NPC",
+    ["Chat"] = "聊天",
     -- DCGM1A
     ["GM actions"] = "GM 操作",
     ["Kill"] = "杀死",

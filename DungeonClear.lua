@@ -4851,6 +4851,18 @@ end)
     title:SetTextColor(0.24, 0.60, 1.0)
     local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+    -- RebornWOW DCCHAT1A: open the chat log copy panel (command output you can copy).
+    local chatBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    chatBtn:SetSize(96, 20)
+    chatBtn:SetPoint("RIGHT", close, "LEFT", -2, 0)
+    DCBind(chatBtn, "Chat log")
+    chatBtn:SetScript("OnClick", function() if DCChatCopyToggle then DCChatCopyToggle() end end)
+    chatBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(DCL("Command output and chat lines in a box you can copy from. Also /dc chat."), 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    chatBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     local info = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     info:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -38)
@@ -5180,6 +5192,648 @@ end)
     DCLoc.OnChange(function() if f:IsShown() then Render() end end)
 end)()
 
+-- Chat log copy panel (RebornWOW DCCHAT1A, reworked in DCCHAT1B, 1E mirrors the chat frame, 1F records slash commands and tells your commands apart, 1G recognises chat by its channel tag).
+-- Chat-frame lines cannot be selected or copied in this client, so the lines you care about
+-- are kept here. Two views, picked at the top:
+--   "my commands only": the commands YOU type (in the chat box or in this panel) and what
+--       they print -- no bot or player talk, and no output of other addons' automatic commands;
+--   "everything": the same plus all chat and other system lines, drawn in a colour you pick.
+-- It has its own input line, so commands can be typed here without opening the chat box.
+-- Copy with the buttons (CopyToClipboard when the client has it), or switch to "select
+-- mode" to mark text with the mouse and press Ctrl+C. /dc chat, or the "Chat log" button
+-- on the coordinate window.
+;(function()
+    -- DCCHAT1C: the whole panel is built inside pcall. If anything in this client rejects a
+    -- call, the error text is printed in the chat frame (red) instead of the panel silently
+    -- missing, and the open function below still exists.
+    local buildError
+    local stage = "start"
+    local buildOk, buildErr = pcall(function()
+    local CAP_MINE, CAP_CHAT = 400, 200   -- lines kept: your commands + output / everything else
+    local FIRST_WAIT = 3.0                -- seconds a command waits for its first output line
+    local IDLE_GAP = 1.0                  -- seconds without output that close a command's window
+    local CHAT_EVENTS = {
+        CHAT_MSG_SAY = "Say", CHAT_MSG_YELL = "Yell", CHAT_MSG_PARTY = "Party", CHAT_MSG_PARTY_LEADER = "Party",
+        CHAT_MSG_RAID = "Raid", CHAT_MSG_RAID_LEADER = "Raid", CHAT_MSG_GUILD = "Guild",
+        CHAT_MSG_WHISPER = "Whisper from", CHAT_MSG_WHISPER_INFORM = "Whisper to", CHAT_MSG_CHANNEL = "Channel",
+        CHAT_MSG_MONSTER_SAY = "NPC", CHAT_MSG_MONSTER_YELL = "NPC", CHAT_MSG_MONSTER_WHISPER = "NPC",
+    }
+    -- Colour of the lines that are not your commands. Gray by default: red reads like an
+    -- error and is hard on the eyes for long text, gray stays out of the way of your output.
+    local COLORS = {
+        { key = "gray",   label = "Other chat: Gray",   r = 0.62, g = 0.62, b = 0.62 },
+        { key = "red",    label = "Other chat: Red",    r = 1.00, g = 0.30, b = 0.30 },
+        { key = "green",  label = "Other chat: Green",  r = 0.35, g = 0.85, b = 0.35 },
+        { key = "yellow", label = "Other chat: Yellow", r = 1.00, g = 0.92, b = 0.20 },
+        { key = "orange", label = "Other chat: Orange", r = 1.00, g = 0.55, b = 0.10 },
+        { key = "purple", label = "Other chat: Purple", r = 0.78, g = 0.50, b = 1.00 },
+    }
+    -- Your own lines use colours none of the choices above can be mistaken for:
+    -- the command you typed in bright cyan, what it printed in white (indented).
+    -- A printed line that starts with one of these "[Tag] " is somebody talking, never output.
+    local CHAT_TAGS = {
+        ["World"] = true, ["Guild"] = true, ["Officer"] = true, ["Party"] = true, ["Party Leader"] = true,
+        ["Raid"] = true, ["Raid Leader"] = true, ["Raid Warning"] = true, ["Battleground"] = true,
+        ["General"] = true, ["Trade"] = true, ["LocalDefense"] = true, ["LookingForGroup"] = true,
+        ["Say"] = true, ["Yell"] = true, ["Whisper"] = true,
+        ["世界"] = true, ["公会"] = true, ["官员"] = true, ["队伍"] = true, ["队长"] = true,
+        ["团队"] = true, ["团队领袖"] = true, ["团队警报"] = true, ["战场"] = true, ["综合"] = true,
+        ["交易"] = true, ["本地防务"] = true, ["寻求组队"] = true,
+    }
+    local function IsChatterLine(plain)
+        local tag = plain:match("^%[([^%]]+)%] ")
+        if not tag then return false end
+        if tag:find("^%d+%.") then return true end     -- "[1. General]"
+        return CHAT_TAGS[tag] == true
+    end
+    local CMD_COLOR = { r = 0.20, g = 1.00, b = 1.00 }   -- "> .command" / "> /command" lines
+    local OUT_COLOR = { r = 1.00, g = 1.00, b = 1.00 }   -- what the command printed
+    local echoing = false      -- true while the panel itself writes a line into the chat frame
+    local sendingSlash = false -- true while the panel itself runs a slash command
+    local cmdOpenUntil = 0     -- GetTime() until which printed lines count as the last command's output
+    local needRender = false   -- a line was re-labelled: redraw soon
+
+    -- call obj:name(...) only if the client has it, never let it raise
+    local function Try(obj, name, ...)
+        local fn = obj[name]
+        if type(fn) == "function" then return pcall(fn, obj, ...) end
+        return false
+    end
+
+    local function DB()
+        DungeonClearDB.chatcopy = DungeonClearDB.chatcopy or {}
+        local c = DungeonClearDB.chatcopy
+        c.log = c.log or {}
+        if c.mode ~= "all" then c.mode = "mine" end
+        c.color = c.color or "gray"
+        if c.filter == nil then c.filter = "wd1" end   -- hide-words; editable in the panel
+        return c
+    end
+    local function ColorIndex(key)
+        for i, c in ipairs(COLORS) do if c.key == key then return i end end
+        return 1
+    end
+
+    -- Strip colour codes, links and textures: what you copy is plain text.
+    local function Plain(s)
+        s = tostring(s or "")
+        s = s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+        s = s:gsub("|H.-|h(.-)|h", "%1")
+        s = s:gsub("|T.-|t", "")
+        s = s:gsub("||", "|")
+        return s
+    end
+
+    stage = "window"
+    local f = CreateFrame("Frame", "DungeonClearChatCopyFrame", UIParent)
+    f:SetSize(640, 470)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 60)
+    f:SetFrameStrata("DIALOG")
+    f:SetToplevel(true)
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    f:SetBackdropColor(0.03, 0.03, 0.05, 0.94)
+    f:SetBackdropBorderColor(0.20, 0.22, 0.28, 1.0)
+    f:Hide()
+    tinsert(UISpecialFrames, "DungeonClearChatCopyFrame")
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -12)
+    DCBind(title, "Chat log")
+    title:SetTextColor(0.24, 0.60, 1.0)
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+    local count = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    count:SetPoint("RIGHT", close, "LEFT", -8, 0)
+
+    local function Tip(w, text)
+        w:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:AddLine(DCL(text), 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        w:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    local function Button(label, w, onClick, tip)
+        local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        b:SetSize(w, 22)
+        DCBind(b, label)
+        b:SetScript("OnClick", onClick)
+        if tip then Tip(b, tip) end
+        return b
+    end
+
+    local hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -62)
+    hint:SetPoint("RIGHT", f, "RIGHT", -14, 0)
+    hint:SetJustifyH("LEFT")
+    local hintUntil = 0
+    local function Hint(text, seconds)
+        hint:SetText(text)
+        hintUntil = seconds and (GetTime() + seconds) or 0
+    end
+    local function DefaultHint()
+        Hint(DCL("Wheel scrolls (Shift = page). Type a command in the box below. Select mode lets you mark text with the mouse."))
+    end
+
+    stage = "views"
+    -- ------------------------------------------------------------ the two views
+    local bg = CreateFrame("Frame", nil, f)
+    bg:SetPoint("TOPLEFT", f, "TOPLEFT", 10, -78)
+    bg:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -10, 74)
+    bg:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", tile = true, tileSize = 16 })
+    bg:SetBackdropColor(0, 0, 0, 0.5)
+
+    -- coloured, scrolling view (no keyboard focus, so Enter still opens the chat box)
+    local view = CreateFrame("ScrollingMessageFrame", "DungeonClearChatCopyView", bg)
+    view:SetPoint("TOPLEFT", bg, "TOPLEFT", 8, -6)
+    view:SetPoint("BOTTOMRIGHT", bg, "BOTTOMRIGHT", -8, 6)
+    if not Try(view, "SetFontObject", ChatFontNormal) then
+        Try(view, "SetFont", STANDARD_TEXT_FONT or "Fonts\FRIZQT__.TTF", 13)   -- fallback
+    end
+    Try(view, "SetJustifyH", "LEFT")
+    Try(view, "SetFading", false)
+    Try(view, "SetMaxLines", 600)
+    Try(view, "EnableMouseWheel", true)
+    view:SetScript("OnMouseWheel", function(self, delta)
+        if IsShiftKeyDown() then
+            Try(self, delta > 0 and "PageUp" or "PageDown")
+        else
+            for _ = 1, 3 do Try(self, delta > 0 and "ScrollUp" or "ScrollDown") end
+        end
+    end)
+
+    -- plain, selectable view (select mode)
+    local scroll = CreateFrame("ScrollFrame", "DungeonClearChatCopyScroll", bg, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", bg, "TOPLEFT", 6, -6)
+    scroll:SetPoint("BOTTOMRIGHT", bg, "BOTTOMRIGHT", -26, 6)
+    local eb = CreateFrame("EditBox", "DungeonClearChatCopyEditBox", scroll)
+    eb:SetMultiLine(true)
+    eb:SetAutoFocus(false)
+    eb:SetFontObject(ChatFontNormal)
+    eb:SetWidth(580)
+    eb:SetHeight(300)
+    eb:SetMaxLetters(0)
+    scroll:SetScrollChild(eb)
+    scroll:Hide()
+    eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    eb:SetScript("OnCursorChanged", function(self, x, y, w, h) ScrollingEdit_OnCursorChanged(self, x, y, w, h) end)
+    eb:SetScript("OnUpdate", function(self, elapsed) ScrollingEdit_OnUpdate(self, elapsed, scroll) end)
+
+    local selectMode = false
+    local shownText = ""
+    -- the box is for selecting, not editing: a typed change is put back
+    eb:SetScript("OnTextChanged", function(self, userInput)
+        if userInput and self:GetText() ~= shownText then self:SetText(shownText) end
+    end)
+
+    stage = "log"
+    -- ------------------------------------------------------------ the log
+    local function Visible(e) return DB().mode == "all" or e.kind ~= "chat" end
+    local function ColorOf(e)
+        if e.kind == "cmd" then return CMD_COLOR end
+        if e.kind == "out" then return OUT_COLOR end
+        return COLORS[ColorIndex(DB().color)]
+    end
+    local function LineText(e)
+        return "[" .. e.t .. "] " .. (e.kind == "out" and "    " or "") .. e.text
+    end
+    local function VisibleText()
+        local out = {}
+        for _, e in ipairs(DB().log) do
+            if Visible(e) then out[#out + 1] = LineText(e) end
+        end
+        return table.concat(out, "\n")
+    end
+    local function UpdateCount()
+        local n = 0
+        for _, e in ipairs(DB().log) do if Visible(e) then n = n + 1 end end
+        count:SetText(string.format(DCL("%d lines"), n))
+    end
+    local function RefreshSelect()
+        shownText = VisibleText()
+        eb:SetText(shownText)
+        scroll:UpdateScrollChildRect()
+        scroll:SetVerticalScroll(scroll:GetVerticalScrollRange())
+    end
+    local function Render()
+        view:Clear()
+        for _, e in ipairs(DB().log) do
+            if Visible(e) then
+                local c = ColorOf(e)
+                view:AddMessage(LineText(e), c.r, c.g, c.b)
+            end
+        end
+        Try(view, "ScrollToBottom")
+        if selectMode then RefreshSelect() end
+        UpdateCount()
+    end
+
+    local function Trim(log)
+        local mine, chat = 0, 0
+        for _, e in ipairs(log) do if e.kind == "chat" then chat = chat + 1 else mine = mine + 1 end end
+        local i = 1
+        while (chat > CAP_CHAT or mine > CAP_MINE) and i <= #log do
+            local e = log[i]
+            if e.kind == "chat" and chat > CAP_CHAT then table.remove(log, i); chat = chat - 1
+            elseif e.kind ~= "chat" and mine > CAP_MINE then table.remove(log, i); mine = mine - 1
+            else i = i + 1 end
+        end
+    end
+
+    -- lines containing any of the words typed in the "Hide" box are not recorded at all
+    local function Blocked(text)
+        local filt = DB().filter
+        if not filt or filt == "" then return false end
+        local low = text:lower()
+        for term in filt:gmatch("[^,;%s]+") do
+            if low:find(term:lower(), 1, true) then return true end
+        end
+        return false
+    end
+
+    local function Add(kind, text)
+        local c = DB()
+        if c.paused then return end
+        local plain = Plain(text)
+        if Blocked(plain) then return end
+        local e = { t = date("%H:%M:%S"), at = GetTime(), kind = kind, text = plain }
+        c.log[#c.log + 1] = e
+        Trim(c.log)
+        if f:IsShown() and Visible(e) then
+            local col = ColorOf(e)
+            view:AddMessage(LineText(e), col.r, col.g, col.b)
+            if selectMode and not eb:HasFocus() then RefreshSelect() end
+            UpdateCount()
+        end
+        return e
+    end
+
+    -- A command you typed. Dot commands are answered by the server a little later, so the
+    -- window for its output opens now. A local slash command (/run print(...)) prints its
+    -- output at once, before this hook runs: pull those lines up under the command.
+    local function NoteCommand(text, backfill)
+        local c = DB()
+        if c.paused then return end
+        local now = GetTime()
+        cmdOpenUntil = now + FIRST_WAIT
+        if not backfill then Add("cmd", "> " .. text); return end
+        local plain = Plain("> " .. text)
+        if Blocked(plain) then return end
+        local log = c.log
+        local first = #log + 1
+        while first > 1 and log[first - 1].at and log[first - 1].at >= now - 0.15 and log[first - 1].kind ~= "cmd" do
+            first = first - 1
+        end
+        table.insert(log, first, { t = date("%H:%M:%S"), at = now, kind = "cmd", text = plain })
+        for i = first + 1, #log do
+            if log[i].kind == "chat" and not log[i].chatter then log[i].kind = "out" end
+        end
+        Trim(log)
+        needRender = true
+    end
+
+    -- ------------------------------------------------------------ copy
+    local function SelectText(text)
+        selectMode = true
+        view:Hide(); scroll:Show()
+        shownText = text
+        eb:SetText(text)
+        eb:SetFocus()
+        eb:HighlightText()
+    end
+    local function Copy(text)
+        if not text or text == "" then
+            Hint("|cffffd100" .. DCL("Nothing to copy yet.") .. "|r", 3)
+            return
+        end
+        if CopyToClipboard then
+            CopyToClipboard(text)
+            Hint("|cff33ff33" .. DCL("Copied to the clipboard.") .. "|r", 3)
+        else
+            SelectText(text)
+            Hint("|cffffd100" .. DCL("This client cannot copy directly: press Ctrl+C.") .. "|r", 8)
+        end
+    end
+    -- the last command you typed and everything it printed
+    local function LastCommandText()
+        local log = DB().log
+        local from
+        for i = #log, 1, -1 do
+            if log[i].kind == "cmd" then from = i; break end
+        end
+        if not from then return nil end
+        local out = { LineText(log[from]) }
+        for i = from + 1, #log do
+            if log[i].kind == "out" then out[#out + 1] = LineText(log[i]) else break end
+        end
+        return table.concat(out, "\n")
+    end
+
+    stage = "top row"
+    -- ------------------------------------------------------------ top row: view, colour, pause
+    -- two side-by-side choices, the active one stays highlighted
+    local mineBtn, allBtn, colorBtn
+    local function ApplyTopRow()
+        local c = DB()
+        if c.mode == "all" then
+            mineBtn:UnlockHighlight(); allBtn:LockHighlight(); colorBtn:Enable()
+        else
+            mineBtn:LockHighlight(); allBtn:UnlockHighlight(); colorBtn:Disable()
+        end
+        DCBind(colorBtn, COLORS[ColorIndex(c.color)].label)
+    end
+    mineBtn = Button("My commands", 110, function()
+        DB().mode = "mine"
+        ApplyTopRow(); Render()
+    end, "Only the commands you type (in the chat box or in this panel) and what they print. No bot or player talk, nothing printed by other tools.")
+    mineBtn:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -36)
+    allBtn = Button("Everything", 90, function()
+        DB().mode = "all"
+        ApplyTopRow(); Render()
+    end, "Everything the chat box shows, plus your commands. Lines that are not yours use the colour on the right.")
+    allBtn:SetPoint("LEFT", mineBtn, "RIGHT", 2, 0)
+    colorBtn = Button("Other chat: Gray", 130, function()
+        local c = DB()
+        c.color = COLORS[ColorIndex(c.color) % #COLORS + 1].key
+        ApplyTopRow(); Render()
+    end, "Colour of the lines that are not your commands (click to cycle). Only used in 'Everything'. Gray stays out of the way; red looks like an error and is tiring to read.")
+    colorBtn:SetPoint("LEFT", allBtn, "RIGHT", 8, 0)
+
+    local pause = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    pause:SetSize(22, 22)
+    pause:SetPoint("LEFT", colorBtn, "RIGHT", 10, 0)
+    local pauseText = pause:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    pauseText:SetPoint("LEFT", pause, "RIGHT", 0, 1)
+    DCBind(pauseText, "Pause recording")
+    pause:SetScript("OnClick", function(self) DB().paused = self:GetChecked() and true or false end)
+
+    -- words to hide: noise from other tools (an automatic test command that prints every second ...)
+    local filterLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    filterLabel:SetPoint("LEFT", pauseText, "RIGHT", 12, 0)
+    DCBind(filterLabel, "Hide:")
+    local filterBox = CreateFrame("EditBox", "DungeonClearChatCopyFilter", f, "InputBoxTemplate")
+    filterBox:SetSize(110, 20)
+    filterBox:SetPoint("LEFT", filterLabel, "RIGHT", 8, 0)
+    filterBox:SetAutoFocus(false)
+    filterBox:SetMaxLetters(80)
+    filterBox:SetFontObject(ChatFontNormal)
+    filterBox:SetScript("OnTextChanged", function(self, userInput)
+        if userInput then DB().filter = self:GetText() end
+    end)
+    filterBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    filterBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    Tip(filterBox, "Lines containing any of these words (separate them with commas) are not recorded. Use it to hide the noise of other tools. Capital letters do not matter.")
+
+    stage = "input line"
+    -- ------------------------------------------------------------ bottom: input line
+    local input = CreateFrame("EditBox", "DungeonClearChatCopyInput", f, "InputBoxTemplate")
+    input:SetSize(540, 22)
+    input:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 20, 40)
+    input:SetAutoFocus(false)
+    input:SetMaxLetters(255)
+    input:SetFontObject(ChatFontNormal)
+    Try(input, "SetAltArrowKeyMode", false)
+    local inputHint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    inputHint:SetPoint("BOTTOMLEFT", input, "TOPLEFT", -4, 2)
+    DCBind(inputHint, "Command (starts with . or /), Enter sends, Esc or a click outside leaves the box:")
+
+    local history, histPos = {}, 0
+    local panelSending = false
+    local function Send(text)
+        if text:sub(1, 1) == "/" then
+            -- slash commands go through the normal chat parser
+            local box = DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.editBox or ChatFrame1EditBox
+            if box then
+                NoteCommand(text)
+                sendingSlash = true
+                pcall(function() box:SetText(text); ChatEdit_SendText(box, 1) end)
+                sendingSlash = false
+            end
+            return
+        end
+        if text:sub(1, 1) == "." and DEFAULT_CHAT_FRAME then
+            echoing = true
+            DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff> " .. text .. "|r")   -- also in the chat frame
+            echoing = false
+        end
+        panelSending = true
+        SendChatMessage(text, "SAY")
+        panelSending = false
+    end
+    input:SetScript("OnEnterPressed", function(self)
+        local text = (self:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if text == "" then self:ClearFocus(); return end
+        history[#history + 1] = text
+        if #history > 40 then table.remove(history, 1) end
+        histPos = #history + 1
+        self:SetText("")
+        Send(text)
+    end)
+    input:SetScript("OnEscapePressed", function(self) self:SetText(""); self:ClearFocus() end)
+    -- command history on Up/Down: optional, a client that rejects it just has no history
+    pcall(input.SetScript, input, "OnArrowPressed", function(self, key)
+        if key == "UP" and histPos > 1 then histPos = histPos - 1
+        elseif key == "DOWN" and histPos <= #history then histPos = histPos + 1
+        else return end
+        self:SetText(history[histPos] or "")
+    end)
+
+    stage = "buttons"
+    -- ------------------------------------------------------------ bottom: buttons
+    local copyAll = Button("Copy all", 90, function() Copy(VisibleText()) end, "Copy every line shown.")
+    copyAll:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 12, 10)
+    local copyLast = Button("Copy last command", 150, function()
+        local t = LastCommandText()
+        if not t then
+            Hint("|cffffd100" .. DCL("No command found. Type a command starting with a dot first.") .. "|r", 4)
+            return
+        end
+        Copy(t)
+    end, "The command you typed last and everything it printed.")
+    copyLast:SetPoint("LEFT", copyAll, "RIGHT", 6, 0)
+    local selectBtn
+    selectBtn = Button("Select mode", 100, function()
+        selectMode = not selectMode
+        if selectMode then
+            view:Hide(); scroll:Show(); RefreshSelect()
+            DCBind(selectBtn, "Back to view")
+        else
+            eb:ClearFocus(); scroll:Hide(); view:Show()
+            DCBind(selectBtn, "Select mode")
+            Render()
+        end
+    end, "Show the lines as plain text you can mark with the mouse and copy with Ctrl+C.")
+    selectBtn:SetPoint("LEFT", copyLast, "RIGHT", 6, 0)
+    local latest = Button("Scroll to latest", 110, function() Try(view, "ScrollToBottom") end)
+    latest:SetPoint("LEFT", selectBtn, "RIGHT", 6, 0)
+    local clear = Button("Clear", 70, function() wipe(DB().log); Render() end)
+    clear:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -12, 10)
+
+    f:SetScript("OnUpdate", function()
+        if hintUntil > 0 and GetTime() > hintUntil then hintUntil = 0; DefaultHint() end
+        -- a click anywhere outside the panel gives the keyboard back (Enter opens the chat box again)
+        if (input:HasFocus() or eb:HasFocus() or filterBox:HasFocus()) and IsMouseButtonDown("LeftButton") and not MouseIsOver(f) then
+            input:ClearFocus(); eb:ClearFocus(); filterBox:ClearFocus()
+        end
+        if needRender and f:IsShown() then needRender = false; Render() end
+    end)
+    f:SetScript("OnHide", function() input:ClearFocus(); eb:ClearFocus(); filterBox:ClearFocus() end)
+
+    stage = "recording"
+    -- ------------------------------------------------------------ what gets recorded
+
+    -- A command counts as "yours" only when it came from a chat edit box (you typed it and
+    -- pressed Enter) or from this panel's input line. Other addons that send commands by
+    -- themselves (automatic test tools) are not yours and are left out of "my commands".
+    local function TypedByUser()
+        if panelSending then return true end
+        local fo = GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus() or nil
+        if not fo then return false end
+        local name = fo.GetName and fo:GetName() or ""
+        return fo.chatFrame ~= nil or name:find("^ChatFrame%d+EditBox$") ~= nil
+    end
+    pcall(hooksecurefunc, "SendChatMessage", function(msg)
+        if not DungeonClearDB or type(msg) ~= "string" or msg:sub(1, 1) ~= "." then return end
+        local ok = pcall(function()
+            if not TypedByUser() then return end
+            NoteCommand(msg)
+        end)
+    end)
+
+    -- Slash commands typed in a chat box do not go through SendChatMessage. Remember the
+    -- last text of each chat edit box and read it when the box is sent.
+    local lastTyped = {}
+    local function WatchEditBox(box)
+        if box.dcWatched then return end
+        box.dcWatched = true
+        box:HookScript("OnTextChanged", function(self)
+            local t = self:GetText()
+            if t and t ~= "" then lastTyped[self] = t end
+        end)
+        box:HookScript("OnEditFocusGained", function(self) lastTyped[self] = nil end)
+    end
+    for i = 1, (NUM_CHAT_WINDOWS or 7) do
+        local box = _G["ChatFrame" .. i .. "EditBox"]
+        if box then pcall(WatchEditBox, box) end
+    end
+    pcall(hooksecurefunc, "ChatEdit_SendText", function(box)
+        local t = lastTyped[box]
+        lastTyped[box] = nil
+        if sendingSlash or not t then return end
+        if t:sub(1, 1) == "/" and not t:find("^/dc%s+chat") then NoteCommand(t, true) end
+    end)
+
+    -- What is recorded is what the chat frame shows: its AddMessage is hooked, so lines other
+    -- addons print straight into the chat box are caught too. The CHAT_MSG_* events are only
+    -- used to tell player/bot talk (not command output) apart, in either order of arrival.
+    local chatterTick = -1     -- GetTime() of the last chat event (same frame = same message)
+    local chatterBodies = {}   -- { plain text of a chat event, expires }
+    local function RememberChatter(body)
+        local pb = Plain(body)
+        if pb == "" then return end
+        chatterBodies[#chatterBodies + 1] = { pb, GetTime() + 4 }
+        if #chatterBodies > 80 then table.remove(chatterBodies, 1) end
+    end
+    local function IsChatterBody(plain)
+        local now = GetTime()
+        for i = #chatterBodies, 1, -1 do
+            local r = chatterBodies[i]
+            if r[2] < now then table.remove(chatterBodies, i)
+            elseif plain:find(r[1], 1, true) then return true end
+        end
+        return false
+    end
+    -- the event arrived AFTER its line was printed: the line was taken for command output
+    local function RelabelAsChatter(body)
+        local pb = Plain(body)
+        if pb == "" then return false end
+        local log = DB().log
+        for i = #log, math.max(1, #log - 6), -1 do
+            local e = log[i]
+            if e.kind == "out" and e.text:find(pb, 1, true) then e.kind = "chat"; return true end
+        end
+        return false
+    end
+
+    -- the chat box can show its own "[06:33:14] " in front of each line: drop it, the panel has its own
+    local function StripStamp(s)
+        s = s:gsub("^%[%d%d?:%d%d:?%d*%s*[APMapm]*%]%s*", "")
+        s = s:gsub("^%d%d?:%d%d:?%d*%s*[APMapm]*%s+", "")
+        return s
+    end
+
+    local function OnChatLine(_, text)
+        if echoing or not DungeonClearDB or type(text) ~= "string" then return end
+        local plain = StripStamp(Plain(text))
+        if plain == "" then return end
+        -- "[World] [Name]: text" lines are chat the server prints as ordinary text
+        local chatter = IsChatterLine(plain) or plain:find("^%[[^%]]+%] %[[^%]]+%]:") ~= nil
+            or chatterTick == GetTime() or IsChatterBody(plain)
+        if not chatter and GetTime() <= cmdOpenUntil then
+            Add("out", plain)
+            cmdOpenUntil = GetTime() + IDLE_GAP
+        else
+            local e = Add("chat", plain)
+            if e and chatter then e.chatter = true end
+        end
+    end
+    local chatFrame = DEFAULT_CHAT_FRAME or _G["ChatFrame1"]
+    if chatFrame then pcall(hooksecurefunc, chatFrame, "AddMessage", OnChatLine) end
+
+    local ev = CreateFrame("Frame")
+    for e in pairs(CHAT_EVENTS) do pcall(ev.RegisterEvent, ev, e) end
+    ev:SetScript("OnEvent", function(_, _, msg)
+        if not DungeonClearDB or type(msg) ~= "string" then return end
+        RememberChatter(msg)
+        local now = GetTime()
+        chatterTick = now
+        -- the line may have been printed a moment before this event: same frame -> same message
+        local log = DB().log
+        for i = #log, math.max(1, #log - 6), -1 do
+            local e = log[i]
+            if e.at == now and e.kind == "out" then e.kind = "chat"; e.chatter = true; needRender = true end
+        end
+        if RelabelAsChatter(msg) then needRender = true end
+    end)
+
+    f:SetScript("OnShow", function()
+        local ok, e = pcall(function()
+            pause:SetChecked(DB().paused and true or false)
+            filterBox:SetText(DB().filter or "")
+            ApplyTopRow()
+            DefaultHint()
+            Render()
+        end)
+        if not ok and DEFAULT_CHAT_FRAME then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[DungeonClear] chat log panel error: " .. tostring(e) .. "|r")
+        end
+    end)
+
+    DCLoc.OnChange(function() if f:IsShown() then ApplyTopRow(); DefaultHint(); UpdateCount() end end)
+    end)  -- pcall
+    if not buildOk then
+        buildError = "|cffff3333[DungeonClear] chat log panel failed to build (stage: " .. stage .. "): " .. tostring(buildErr) .. "|r"
+        if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(buildError) end
+    end
+    local frame = _G["DungeonClearChatCopyFrame"]
+    function DCChatCopyToggle()
+        if buildError and DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(buildError) end
+        if not frame then return end
+        if frame:IsShown() then frame:Hide() else frame:Show() end
+    end
+end)()
+
 -- Slash Command Registration
 SLASH_DUNGEONCLEAR1 = "/dc"
 SlashCmdList["DUNGEONCLEAR"] = function(msg)
@@ -5197,6 +5851,9 @@ SlashCmdList["DUNGEONCLEAR"] = function(msg)
     elseif msg == "gps" then
         -- RebornWOW DCGPS1A: coordinate copy box
         if DCGpsToggle then DCGpsToggle() end
+    elseif msg == "chat" then
+        -- RebornWOW DCCHAT1A: chat log copy panel
+        if DCChatCopyToggle then DCChatCopyToggle() end
     else
         -- Parse "/dc <sub> [param]" and send via addon message
         local subCmd, param = msg:match("^(%S+)%s*(.*)$")
