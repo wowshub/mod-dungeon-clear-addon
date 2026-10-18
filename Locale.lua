@@ -309,6 +309,14 @@ local zh = {
     ["Follow this bot (camera)"] = "跟随观看这个机器人",
     ["Show its gear"] = "查看它的装备",
     ["Teleport next to it (.appear)"] = "传送到它身边（.appear）",
+    -- DCGM1D
+    ["My party (GM)"] = "我的队伍（GM）",
+    ["Kill all bots"] = "杀死全部机器人",
+    ["Kill me"] = "杀死我自己",
+    ["Cheat tier for my bots"] = "我的机器人作弊档",
+    ["Wipe the party (bots and me)"] = "全队死亡（机器人和我）",
+    ["Kill or raise the bots of the party YOU lead (not a test run), or yourself, to test what happens when nobody can resurrect. Also /dc gm. Other real players are never touched."] =
+        "杀死或复活你自己带的队伍里的机器人（不是测试队），或者你自己，用来测试没人能复活时的流程。也可以输入 /dc gm。不会碰到其他真人玩家。",
     -- DCGM1B3
     ["Cheat tier:"] = "作弊档：",
     ["(not a clean result)"] = "（不是干净成绩）",

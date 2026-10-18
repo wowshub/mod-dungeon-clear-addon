@@ -1404,7 +1404,9 @@ DCBind(testBtn, "Test")
 -- Capture button sends .gps for you). A do-block keeps its local out of the main
 -- chunk's 200-local budget.
 do
-    local gpsBtn = CreateFrame("Button", "DungeonClearGpsButton", frame, "UIPanelButtonTemplate")
+    -- DCGM1D: own name; "DungeonClearGpsButton" is the minimap icon (DCICON1A), which
+    -- RebornDock / MinimapButtonFrame remember by that name.
+    local gpsBtn = CreateFrame("Button", "DungeonClearHeaderGpsButton", frame, "UIPanelButtonTemplate")
     gpsBtn:SetSize(40, 20)
     gpsBtn:SetPoint("RIGHT", testBtn, "LEFT", -2, 0)
     DCBind(gpsBtn, "GPS")
@@ -3058,6 +3060,33 @@ end
         if lf:IsShown() then lf:Hide() else lf:Show() end
     end, "Open the list of every running test: watch any of them, see each party's bots, their level, item level, health and gear.")
     listBtn:SetPoint("LEFT", runLabel, "RIGHT", 12, 0)
+    -- RebornWOW DCGM1D: GM kill / raise for YOUR OWN party (not a test run), to test the
+    -- player-led death flow on demand. Same menu as /dc gm. Only your bots and you.
+    local myMenuFrame = CreateFrame("Frame", "DungeonClearMyPartyMenu", UIParent, "UIDropDownMenuTemplate")
+    function DCMyPartyMenu()
+        local function P(who, act) Send(".dc party " .. who .. " " .. act) end
+        local tiers = {}
+        for _, t in ipairs({ { "normal", "Normal" }, { "story", "Story" }, { "casual", "Casual" }, { "speed", "Speed" } }) do
+            tiers[#tiers + 1] = { text = DCL(t[2]), notCheckable = true,
+                                  func = function() CloseDropDownMenus(); P("bots", "tier " .. t[1]) end }
+        end
+        local menu = {
+            { text = DCL("My party (GM)"), isTitle = true, notCheckable = true },
+            { text = DCL("Kill everyone who can resurrect"), notCheckable = true, func = function() P("rezzers", "die") end },
+            { text = DCL("Kill the healers"), notCheckable = true, func = function() P("healers", "die") end },
+            { text = DCL("Leave only the tank alive"), notCheckable = true, func = function() P("allbuttank", "die") end },
+            { text = DCL("Kill all bots"), notCheckable = true, func = function() P("bots", "die") end },
+            { text = DCL("Kill me"), notCheckable = true, func = function() P("me", "die") end },
+            { text = DCL("Wipe the party (bots and me)"), notCheckable = true, func = function() P("all", "die") end },
+            { text = DCL("Resurrect everyone"), notCheckable = true, func = function() P("all", "rez") end },
+            { text = DCL("Cheat tier for my bots"), notCheckable = true, hasArrow = true, menuList = tiers },
+            { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
+        }
+        EasyMenu(menu, myMenuFrame, "cursor", 0, 0, "MENU")
+    end
+    local myBtn = Button("My party (GM)", 110, function() DCMyPartyMenu() end,
+        "Kill or raise the bots of the party YOU lead (not a test run), or yourself, to test what happens when nobody can resurrect. Also /dc gm. Other real players are never touched.")
+    myBtn:SetPoint("LEFT", listBtn, "RIGHT", 6, 0)
     DCLoc.OnChange(function() if lf:IsShown() then RenderRuns() end end)
     tf:HookScript("OnShow", function() if DB().listShown then lf:Show() end end)
     tf:HookScript("OnHide", function() local was = lf:IsShown(); lf:Hide(); DB().listShown = was end)
@@ -6186,6 +6215,9 @@ SlashCmdList["DUNGEONCLEAR"] = function(msg)
     elseif msg == "chat" then
         -- RebornWOW DCCHAT1A: chat log copy panel
         if DCChatCopyToggle then DCChatCopyToggle() end
+    elseif msg == "gm" then
+        -- RebornWOW DCGM1D: GM kill / raise menu for your own party
+        if DCMyPartyMenu then DCMyPartyMenu() end
     elseif msg == "icons" then
         -- RebornWOW DCICON1A: hide or show the coordinate / chat log minimap icons
         if DCToolIconsToggle then DCToolIconsToggle() end
