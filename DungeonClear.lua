@@ -2338,8 +2338,11 @@ end
         { key = "casual", label = "Casual" }, { key = "speed", label = "Speed" },
     }
     local TIER_COLOR = { normal = "|cffcccccc", story = "|cff3da6ff", casual = "|cff00ff00", speed = "|cffff6600" }
+    -- DCGM1B3: every run with tier data gets a label (grey [Normal] too) so runs of
+    -- the same party at different tiers read apart at a glance; no data = no label.
     local function TierTag(tier)
-        if not tier or tier == "" or tier == "-" or tier == "normal" then return "" end
+        if not tier or tier == "" then return "" end
+        if tier == "-" then tier = "normal" end
         local names = {}
         for part in tier:gmatch("[^>]+") do
             local label = part
@@ -2347,7 +2350,7 @@ end
             names[#names + 1] = label
         end
         local last = tier:match("([^>]+)$")
-        return "  " .. (TIER_COLOR[last] or "|cffffd100") .. "[" .. table.concat(names, ">") .. "]|r"
+        return (TIER_COLOR[last] or "|cffffd100") .. "[" .. table.concat(names, ">") .. "]|r "
     end
 
     local function RenderStats()
@@ -2366,10 +2369,17 @@ end
             lines[#lines + 1] = string.format("%s %d/%d   %s %d   %s %d   %s %s",
                 DCL("Bosses"), run.killed, run.total, DCL("Deaths"), run.deaths or 0,
                 DCL("Pulls"), run.pulls or 0, DCL("Time"), Clock(run.elapsed))
-            lines[#lines + 1] = string.format("%s %s   %s %s %s%s",
+            lines[#lines + 1] = string.format("%s %s   %s %s %s",
                 DCL("Seed:"), run.roster and DCL("(my characters)") or tostring(run.seed),
                 DCL("Gear"), (run.gearIlvl or 0) > 0 and ("<=" .. run.gearIlvl) or DCL("unlimited"),
-                q and DCL(q) or "", TierTag(run.tier))  -- DCGM1B2
+                q and DCL(q) or "")
+            -- DCGM1B3: the tier on its own line; anything but plain Normal is not a clean result.
+            local tag = TierTag(run.tier)
+            if tag ~= "" then
+                local clean = run.tier == "-" or run.tier == "normal"
+                lines[#lines + 1] = DCL("Cheat tier:") .. " " .. tag ..
+                    (clean and "" or ("|cff999999" .. DCL("(not a clean result)") .. "|r"))
+            end
         end
         -- DCTEST7A: the boss/objective checklist, in clear order.
         if info.list and #info.list > 0 then
@@ -2788,9 +2798,9 @@ end
                 local extra = ""
                 if (run.regroups or 0) > 0 then extra = extra .. "  |cffff8000" .. DCL("Entrance revives") .. " " .. run.regroups .. "|r" end
                 if (run.cheats or 0) > 0 then extra = extra .. "  |cffffd100" .. DCL("GM actions") .. " " .. run.cheats .. "|r" end
-                row.l1:SetText(string.format("|cff999999%s|r  |cffffd100%s|r%s%s  %s  %s %d/%d  %s %d%s",
-                    DCL("Finished"), DungeonName(run.token), heroic, TierTag(run.tier), res, DCL("Bosses"),
-                    run.killed or 0, run.total or 0, DCL("Deaths"), run.deaths or 0, extra))  -- DCGM1B2 tier
+                row.l1:SetText(string.format("|cff999999%s|r  %s|cffffd100%s|r%s  %s  %s %d/%d  %s %d%s",
+                    DCL("Finished"), TierTag(run.tier), DungeonName(run.token), heroic, res, DCL("Bosses"),
+                    run.killed or 0, run.total or 0, DCL("Deaths"), run.deaths or 0, extra))  -- DCGM1B3 tier first
                 local d = DCL("Time") .. " " .. Clock(run.elapsed or 0)
                 if run.endedAt and run.endedAt > 0 then d = d .. "  " .. date("%m-%d %H:%M", run.endedAt) end
                 if run.reason and run.reason ~= "" then d = d .. "  |cffff3333" .. run.reason .. "|r" end
@@ -2805,9 +2815,9 @@ end
                 local stage = DCL(STAGES[run.stage] or run.stage)
                 local alert = run.wiped and ("  |cffff3333" .. DCL("wiped") .. "|r") or (run.combat and ("  |cffff6600" .. DCL("in combat") .. "|r") or "")
                 local dead = (run.deaths and run.deaths > 0) and ("  |cffff3333" .. DCL("Deaths") .. " " .. run.deaths .. "|r") or ""
-                row.l1:SetText(string.format("%s|cffffd100%s|r%s%s  %s  %s %d/%d%s%s",
-                    mark, DungeonName(run.token), heroic, TierTag(run.tier), stage, DCL("Bosses"),
-                    run.killed, run.total, dead, alert))  -- DCGM1B2 tier
+                row.l1:SetText(string.format("%s%s|cffffd100%s|r%s  %s  %s %d/%d%s%s",
+                    mark, TierTag(run.tier), DungeonName(run.token), heroic, stage, DCL("Bosses"),
+                    run.killed, run.total, dead, alert))  -- DCGM1B3 tier first
                 local detail = DCL("Time") .. " " .. Clock(run.elapsed)
                 if run.boss and run.boss ~= "" then detail = detail .. "  " .. DCL("Target:") .. " " .. run.boss end
                 if run.stall and run.stall ~= "" then

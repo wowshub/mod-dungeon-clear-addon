@@ -309,6 +309,9 @@ local zh = {
     ["Follow this bot (camera)"] = "跟随观看这个机器人",
     ["Show its gear"] = "查看它的装备",
     ["Teleport next to it (.appear)"] = "传送到它身边（.appear）",
+    -- DCGM1B3
+    ["Cheat tier:"] = "作弊档：",
+    ["(not a clean result)"] = "（不是干净成绩）",
     -- DCGM1B2
     ["All four tiers at once"] = "四档各开一局（同时）",
     ["Switch cheat tier"] = "切换作弊档",
