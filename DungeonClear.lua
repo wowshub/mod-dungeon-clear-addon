@@ -592,6 +592,42 @@ local function SendDcCommand(subCmd, param, silent)
     end
 end
 
+-- RebornWOW DCGM1F: cheat-tier tag at the top right of the status box (design §9.5):
+-- always one of [Normal] / [Story] / [Casual] / [Speed] for the party this panel
+-- controls -- the test run you watch, else the party you are in. Polled every 5 s
+-- while the panel is open (the poller is a child of the panel). A do-block keeps its
+-- locals out of the main chunk's 200-local budget.
+do
+    local tag = statusFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    tag:SetPoint("TOPRIGHT", statusFrame, "TOPRIGHT", -10, -10)
+    local TIERS = { normal = { "Normal", "|cffcccccc" }, story = { "Story", "|cff3da6ff" },
+                    casual = { "Casual", "|cff00ff00" }, speed = { "Speed", "|cffff6600" } }
+    local current = nil
+    local function Paint()
+        local t = TIERS[current or ""]
+        if t then tag:SetText(t[2] .. "[" .. DCL(t[1]) .. "]|r") else tag:SetText("") end
+    end
+    DCLoc.OnChange(Paint)
+    local ev = CreateFrame("Frame")
+    ev:RegisterEvent("CHAT_MSG_ADDON")
+    ev:SetScript("OnEvent", function(_, _, prefix, msg)
+        if prefix ~= "DC" or type(msg) ~= "string" or msg:sub(1, 5) ~= "TIER\t" then return end
+        local _, tier = strsplit("\t", msg)
+        current = tier
+        Paint()
+    end)
+    local elapsed = 5
+    local poller = CreateFrame("Frame", nil, frame)
+    poller:SetScript("OnUpdate", function(_, dt)
+        elapsed = elapsed + dt
+        if elapsed < 5 then return end
+        elapsed = 0
+        SendDcCommand("tier", "", true)
+    end)
+    -- ask again right after a tier was changed from a menu
+    function DCTierRefreshSoon() elapsed = 4 end
+end
+
 -- Action Buttons Panel
 -- Four-up action row: On / Off / Skip / Pause-Resume (narrowed to fit one row).
 local onBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
@@ -3083,7 +3119,10 @@ end
     -- player-led death flow on demand. Same menu as /dc gm. Only your bots and you.
     local myMenuFrame = CreateFrame("Frame", "DungeonClearMyPartyMenu", UIParent, "UIDropDownMenuTemplate")
     function DCMyPartyMenu()
-        local function P(who, act) Send(".dc party " .. who .. " " .. act) end
+        local function P(who, act)
+            Send(".dc party " .. who .. " " .. act)
+            if DCTierRefreshSoon then DCTierRefreshSoon() end  -- DCGM1F: repaint the tag
+        end
         local tiers = {}
         for _, t in ipairs({ { "normal", "Normal" }, { "story", "Story" }, { "casual", "Casual" }, { "speed", "Speed" } }) do
             tiers[#tiers + 1] = { text = DCL(t[2]), notCheckable = true,
@@ -3103,9 +3142,8 @@ end
         }
         EasyMenu(menu, myMenuFrame, "cursor", 0, 0, "MENU")
     end
-    local myBtn = Button("My party (GM)", 110, function() DCMyPartyMenu() end,
-        "Kill or raise the bots of the party YOU lead (not a test run), or yourself, to test what happens when nobody can resurrect. Also /dc gm. Other real players are never touched.")
-    myBtn:SetPoint("LEFT", listBtn, "RIGHT", 6, 0)
+    -- DCGM1F: no button here any more -- "my party" is mode 1 and lives on the main
+    -- panel (GM button) and /dc gm; this window is for test runs (design §9.1).
     DCLoc.OnChange(function() if lf:IsShown() then RenderRuns() end end)
     tf:HookScript("OnShow", function() if DB().listShown then lf:Show() end end)
     tf:HookScript("OnHide", function() local was = lf:IsShown(); lf:Hide(); DB().listShown = was end)
