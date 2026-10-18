@@ -2121,6 +2121,7 @@ end
     -- DCTEST6A: finished runs stay in the list (saved per account, newest first) until
     -- the GM deletes them; the server also re-sends its last 20 with the outcome.
     local finPending, shownCount = nil, 0
+    local LoadStats  -- DCTEST7A: forward; assigned after the run menus
     local function History()
         local t = DB()
         t.history = t.history or {}
@@ -2203,7 +2204,8 @@ end
                 selectedRun = self.run.id
                 gear = nil
                 RenderRuns()
-                if button == "RightButton" and DCTestShowRunMenu then DCTestShowRunMenu(self.run) end
+                if button == "RightButton" and DCTestShowRunMenu then DCTestShowRunMenu(self.run)
+                elseif LoadStats then LoadStats(self.run) end
             end
         end)
         runRows[i] = r
@@ -2328,6 +2330,21 @@ end
                 DCL("Gear"), (run.gearIlvl or 0) > 0 and ("<=" .. run.gearIlvl) or DCL("unlimited"),
                 q and DCL(q) or "")
         end
+        -- DCTEST7A: the boss/objective checklist, in clear order.
+        if info.list and #info.list > 0 then
+            local done = 0
+            for _, b in ipairs(info.list) do if b.status == "dead" then done = done + 1 end end
+            lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Boss progress") .. " " .. done .. "/" .. #info.list .. " --|r"
+            local STATUS = {
+                dead = "|cff00ff00" .. DCL("Killed") .. "|r", current = "|cffffd100" .. DCL("Current target") .. "|r",
+                skipped = "|cff999999" .. DCL("Skipped") .. "|r", alive = "|cffffffff" .. DCL("Not yet") .. "|r",
+            }
+            for i, b in ipairs(info.list) do
+                local name = b.objective and (DCL("Objective") .. ": " .. b.name) or b.name
+                local color = b.status == "dead" and "|cff999999" or (b.status == "current" and "|cffffd100" or "|cffffffff")
+                lines[#lines + 1] = string.format("  %d. %s%s|r  %s", i, color, name, STATUS[b.status] or b.status)
+            end
+        end
         lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Bosses down") .. " --|r"
         if #info.kills == 0 then lines[#lines + 1] = "  |cff999999" .. DCL("none yet") .. "|r" end
         for _, k in ipairs(info.kills) do
@@ -2392,7 +2409,7 @@ end
             { text = DCL("Run stats"), notCheckable = true, func = function()
                 selectedRun = run.id
                 if run.kills then
-                    info = { id = run.id, kills = run.kills, deaths = run.deathLog or {} }
+                    info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {} }
                     bottomMode = "stats"
                     RenderRuns()
                 else
@@ -2422,6 +2439,19 @@ end
             { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
         }
         EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
+    end
+
+    -- DCTEST7A: selecting a run shows its stats (boss checklist on top); a finished
+    -- run uses its saved copy when it has one.
+    LoadStats = function(run)
+        if not run then return end
+        if run.finished and run.kills then
+            info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {} }
+            bottomMode = "stats"
+            RenderRuns()
+        else
+            SendDcCommand("testinfo", run.id, true)
+        end
     end
 
     function DCTestShowRunMenu(run)
@@ -2750,16 +2780,19 @@ end
                 end
             end
         elseif kind == "TI_START" then
-            infoPending = { id = parts[2], kills = {}, deaths = {} }
+            infoPending = { id = parts[2], kills = {}, deaths = {}, list = {} }
         elseif kind == "TIB" and infoPending then
             infoPending.kills[#infoPending.kills + 1] = { t = tonumber(parts[2]) or 0, name = parts[3] or "" }
         elseif kind == "TID" and infoPending then
             infoPending.deaths[#infoPending.deaths + 1] = { t = tonumber(parts[2]) or 0, name = parts[3] or "",
                 onBoss = parts[4] == "1", by = parts[5] or "" }
+        elseif kind == "TIL" and infoPending then  -- DCTEST7A: boss checklist row
+            infoPending.list[#infoPending.list + 1] = { name = parts[2] or "", objective = parts[3] == "1",
+                                                        status = parts[4] or "alive" }
         elseif kind == "TI_END" and infoPending then
             info, infoPending = infoPending, nil
             local h = HistFind(info.id)  -- DCTEST6A: keep the stats with the finished record
-            if h then h.kills, h.deathLog = info.kills, info.deaths end
+            if h then h.kills, h.deathLog = info.kills, info.deaths; if #info.list > 0 then h.checklist = info.list end end
             bottomMode = "stats"
             if lf:IsShown() then RenderGear() end
         elseif kind == "TI_ERR" then
@@ -2881,6 +2914,8 @@ end
             lfElapsed = 0
             capture.relistAt = nil
             SendDcCommand("testruns", "", true)
+            -- DCTEST7A: the open stats of a live run follow its progress.
+            if bottomMode == "stats" and info and FindRun(info.id) then SendDcCommand("testinfo", info.id, true) end
         end
         if pendingFollow and GetTime() >= pendingFollow.at then
             Send(".dc spectate follow " .. pendingFollow.name)

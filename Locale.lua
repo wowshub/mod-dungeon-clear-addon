@@ -309,6 +309,12 @@ local zh = {
     ["Follow this bot (camera)"] = "跟随观看这个机器人",
     ["Show its gear"] = "查看它的装备",
     ["Teleport next to it (.appear)"] = "传送到它身边（.appear）",
+    -- DCTEST7A
+    ["Boss progress"] = "首领进度",
+    ["Killed"] = "已击杀",
+    ["Current target"] = "当前目标",
+    ["Not yet"] = "未打",
+    ["Objective"] = "目标",
     -- DCTEST6A
     ["Finished"] = "已结束",
     ["Passed"] = "通过",
