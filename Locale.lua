@@ -309,6 +309,13 @@ local zh = {
     ["Follow this bot (camera)"] = "跟随观看这个机器人",
     ["Show its gear"] = "查看它的装备",
     ["Teleport next to it (.appear)"] = "传送到它身边（.appear）",
+    -- DCGM1B2
+    ["All four tiers at once"] = "四档各开一局（同时）",
+    ["Switch cheat tier"] = "切换作弊档",
+    ["Your own characters cannot run four tests at once - pick one tier."] = "“我的角色”不能同时跑四局，请选一个档位。",
+    ["All four tiers need 4 free test slots, %d free now. Raise the limit with + or stop other tests."] =
+        "四档各一局需要 4 个空位，现在只有 %d 个。用 + 提高上限，或先停掉其他测试。",
+    ["Starting the same party at Normal, Story, Casual and Speed (3 s apart)."] = "同一队伍按 正常、剧情、休闲、速通 各开一局（每 3 秒开一局）。",
     -- DCICON1A
     ["Open the coordinate copy box. Also /dc gps."] = "打开坐标复制框。也可以输入 /dc gps。",
     ["/dc icons hides or shows these icons."] = "输入 /dc icons 可以隐藏或显示这两个图标。",

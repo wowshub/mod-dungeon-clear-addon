@@ -2331,6 +2331,25 @@ end
         for _, r in ipairs(runs) do if r.id == id then return r end end
     end
 
+    -- RebornWOW DCGM1B2: cheat tiers in the run list. A finished run's tier is the chain
+    -- it used ("story", or "normal>casual" when switched mid-run); "-"/"" = normal.
+    local CHEAT_TIERS = {
+        { key = "normal", label = "Normal" }, { key = "story", label = "Story" },
+        { key = "casual", label = "Casual" }, { key = "speed", label = "Speed" },
+    }
+    local TIER_COLOR = { normal = "|cffcccccc", story = "|cff3da6ff", casual = "|cff00ff00", speed = "|cffff6600" }
+    local function TierTag(tier)
+        if not tier or tier == "" or tier == "-" or tier == "normal" then return "" end
+        local names = {}
+        for part in tier:gmatch("[^>]+") do
+            local label = part
+            for _, t in ipairs(CHEAT_TIERS) do if t.key == part then label = DCL(t.label) end end
+            names[#names + 1] = label
+        end
+        local last = tier:match("([^>]+)$")
+        return "  " .. (TIER_COLOR[last] or "|cffffd100") .. "[" .. table.concat(names, ">") .. "]|r"
+    end
+
     local function RenderStats()
         local run = info and (FindRun(info.id) or HistFind(info.id))
         gearBox:Show()
@@ -2347,10 +2366,10 @@ end
             lines[#lines + 1] = string.format("%s %d/%d   %s %d   %s %d   %s %s",
                 DCL("Bosses"), run.killed, run.total, DCL("Deaths"), run.deaths or 0,
                 DCL("Pulls"), run.pulls or 0, DCL("Time"), Clock(run.elapsed))
-            lines[#lines + 1] = string.format("%s %s   %s %s %s",
+            lines[#lines + 1] = string.format("%s %s   %s %s %s%s",
                 DCL("Seed:"), run.roster and DCL("(my characters)") or tostring(run.seed),
                 DCL("Gear"), (run.gearIlvl or 0) > 0 and ("<=" .. run.gearIlvl) or DCL("unlimited"),
-                q and DCL(q) or "")
+                q and DCL(q) or "", TierTag(run.tier))  -- DCGM1B2
         end
         -- DCTEST7A: the boss/objective checklist, in clear order.
         if info.list and #info.list > 0 then
@@ -2423,6 +2442,69 @@ end
         tf:Hide(); tf:Show()
     end
 
+    -- RebornWOW DCGM1B2: replay a run at a chosen cheat tier, or at all four side by side
+    -- (same seed = same classes and roles; bots busy in another test are swapped for
+    -- free ones of the same class). The four starts go out 3 s apart.
+    local tierQueue, tierQueueAt = {}, 0
+    local tierQueueFrame = CreateFrame("Frame")
+    tierQueueFrame:Hide()
+    tierQueueFrame:SetScript("OnUpdate", function(self)
+        if GetTime() < tierQueueAt then return end
+        local cmd = table.remove(tierQueue, 1)
+        if not cmd then self:Hide(); return end
+        Send(cmd)
+        capture.relistAt = GetTime() + 4
+        tierQueueAt = GetTime() + 3
+    end)
+    local function TierReplayCommand(run, key)
+        local cmd = ReplayCommand(run)
+        if key ~= "normal" then cmd = cmd .. " cheat=" .. key end
+        return cmd
+    end
+    local function ReplayAtTier(run, key)
+        Send(TierReplayCommand(run, key))
+        capture.relistAt = GetTime() + 4
+    end
+    local function ReplayAllTiers(run)
+        if run.roster then
+            out:AddMessage("|cffff3333" .. DCL("Your own characters cannot run four tests at once - pick one tier.") .. "|r")
+            return
+        end
+        local free = (cap.value and cap.value > 0) and (cap.value - #runs) or #CHEAT_TIERS
+        if free < #CHEAT_TIERS then
+            out:AddMessage("|cffff3333" .. string.format(DCL("All four tiers need 4 free test slots, %d free now. Raise the limit with + or stop other tests."), math.max(free, 0)) .. "|r")
+            return
+        end
+        for _, t in ipairs(CHEAT_TIERS) do tierQueue[#tierQueue + 1] = TierReplayCommand(run, t.key) end
+        tierQueueAt = 0
+        tierQueueFrame:Show()
+        out:AddMessage("|cff3da6ff" .. DCL("Starting the same party at Normal, Story, Casual and Speed (3 s apart).") .. "|r")
+    end
+    local function ReplayMenu(run)
+        local sub = {}
+        for _, t in ipairs(CHEAT_TIERS) do
+            sub[#sub + 1] = { text = DCL(t.label), notCheckable = true,
+                              func = function() CloseDropDownMenus(); ReplayAtTier(run, t.key) end }
+        end
+        sub[#sub + 1] = { text = DCL("All four tiers at once"), notCheckable = true, disabled = run.roster,
+                          func = function() CloseDropDownMenus(); ReplayAllTiers(run) end }
+        return { text = DCL("Run it again (same seed and gear)"), notCheckable = true, hasArrow = true, menuList = sub }
+    end
+    -- Switch a running test's tier (the server drops the old cheats, applies the new ones).
+    local function SwitchTier(run, key)
+        Send(".dc test bot " .. run.id .. " all tier " .. key)
+        capture.relistAt = GetTime() + 1
+    end
+    local function TierMenu(run)
+        local cur = (run.tier == nil or run.tier == "" or run.tier == "-") and "normal" or run.tier
+        local sub = {}
+        for _, t in ipairs(CHEAT_TIERS) do
+            sub[#sub + 1] = { text = DCL(t.label), checked = cur == t.key,
+                              func = function() CloseDropDownMenus(); SwitchTier(run, t.key) end }
+        end
+        return { text = DCL("Switch cheat tier"), notCheckable = true, hasArrow = true, menuList = sub }
+    end
+
     -- DCTEST6A: right-click menu of a finished run.
     local function ShowFinishedMenu(run)
         local menu = {
@@ -2438,8 +2520,7 @@ end
                     SendDcCommand("testinfo", run.id, true)
                 end
             end },
-            { text = DCL("Run it again (same seed and gear)"), notCheckable = true,
-              func = function() Send(ReplayCommand(run)); capture.relistAt = GetTime() + 4 end },
+            ReplayMenu(run),  -- DCGM1B2: pick the cheat tier
             { text = DCL("Copy its settings to the left"), notCheckable = true, func = function() CopySettings(run) end },
             { text = "|cffff3333" .. DCL("Delete this record") .. "|r", notCheckable = true, func = function()
                 local hist, deleted = History()
@@ -2491,8 +2572,8 @@ end
               disabled = #follow == 0 },
             { text = DCL("Run stats"), notCheckable = true,
               func = function() SendDcCommand("testinfo", run.id, true) end },
-            { text = DCL("Run it again (same seed and gear)"), notCheckable = true,
-              func = function() Send(ReplayCommand(run)) end },
+            ReplayMenu(run),  -- DCGM1B2: pick the cheat tier
+            TierMenu(run),    -- DCGM1B2: switch this run's tier now
             { text = DCL("Copy its settings to the left"), notCheckable = true, func = function() CopySettings(run) end },
             { text = "|cffff3333" .. DCL("Stop this test") .. "|r", notCheckable = true, func = function()
                 StaticPopup_Show("DUNGEONCLEAR_TEST_STOPONE",
@@ -2555,6 +2636,7 @@ end
             { text = DCL("Healers unlimited mana"), notCheckable = true, func = function() GMBot(run, "healers", "power", "on") end },
             { text = DCL("Whole party invincible"), notCheckable = true, func = function() GMBot(run, "all", "god", "on") end },
             { text = DCL("Clear all cheats"), notCheckable = true, func = function() GMBot(run, "all", "clear") end },
+            TierMenu(run),  -- DCGM1B2
             { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
         }
         EasyMenu(menu, runMenuFrame, "cursor", 0, 0, "MENU")
@@ -2706,9 +2788,9 @@ end
                 local extra = ""
                 if (run.regroups or 0) > 0 then extra = extra .. "  |cffff8000" .. DCL("Entrance revives") .. " " .. run.regroups .. "|r" end
                 if (run.cheats or 0) > 0 then extra = extra .. "  |cffffd100" .. DCL("GM actions") .. " " .. run.cheats .. "|r" end
-                row.l1:SetText(string.format("|cff999999%s|r  |cffffd100%s|r%s  %s  %s %d/%d  %s %d%s",
-                    DCL("Finished"), DungeonName(run.token), heroic, res, DCL("Bosses"), run.killed or 0, run.total or 0,
-                    DCL("Deaths"), run.deaths or 0, extra))
+                row.l1:SetText(string.format("|cff999999%s|r  |cffffd100%s|r%s%s  %s  %s %d/%d  %s %d%s",
+                    DCL("Finished"), DungeonName(run.token), heroic, TierTag(run.tier), res, DCL("Bosses"),
+                    run.killed or 0, run.total or 0, DCL("Deaths"), run.deaths or 0, extra))  -- DCGM1B2 tier
                 local d = DCL("Time") .. " " .. Clock(run.elapsed or 0)
                 if run.endedAt and run.endedAt > 0 then d = d .. "  " .. date("%m-%d %H:%M", run.endedAt) end
                 if run.reason and run.reason ~= "" then d = d .. "  |cffff3333" .. run.reason .. "|r" end
@@ -2723,8 +2805,9 @@ end
                 local stage = DCL(STAGES[run.stage] or run.stage)
                 local alert = run.wiped and ("  |cffff3333" .. DCL("wiped") .. "|r") or (run.combat and ("  |cffff6600" .. DCL("in combat") .. "|r") or "")
                 local dead = (run.deaths and run.deaths > 0) and ("  |cffff3333" .. DCL("Deaths") .. " " .. run.deaths .. "|r") or ""
-                row.l1:SetText(string.format("%s|cffffd100%s|r%s  %s  %s %d/%d%s%s",
-                    mark, DungeonName(run.token), heroic, stage, DCL("Bosses"), run.killed, run.total, dead, alert))
+                row.l1:SetText(string.format("%s|cffffd100%s|r%s%s  %s  %s %d/%d%s%s",
+                    mark, DungeonName(run.token), heroic, TierTag(run.tier), stage, DCL("Bosses"),
+                    run.killed, run.total, dead, alert))  -- DCGM1B2 tier
                 local detail = DCL("Time") .. " " .. Clock(run.elapsed)
                 if run.boss and run.boss ~= "" then detail = detail .. "  " .. DCL("Target:") .. " " .. run.boss end
                 if run.stall and run.stall ~= "" then
@@ -2795,6 +2878,7 @@ end
                     r.seed, r.gearIlvl, r.gearQuality = tonumber(parts[3]) or 0, tonumber(parts[4]) or 0, tonumber(parts[5]) or 0
                     r.roster = parts[6] == "1"
                     r.deaths, r.pulls = tonumber(parts[7]) or 0, tonumber(parts[8]) or 0
+                    r.tier = parts[10] or ""  -- DCGM1B2
                     r.comp = {}
                     for name, role in (parts[9] or ""):gmatch("([^:,]+):([^,]*)") do
                         r.comp[#r.comp + 1] = { name = name, role = role }
@@ -2838,6 +2922,7 @@ end
                 deaths = tonumber(parts[9]) or 0, regroups = tonumber(parts[10]) or 0, cheats = tonumber(parts[11]) or 0,
                 level = tonumber(parts[12]) or 0, seed = tonumber(parts[13]) or 0, gearIlvl = tonumber(parts[14]) or 0,
                 gearQuality = tonumber(parts[15]) or 0, roster = parts[16] == "1", comp = {},
+                tier = parts[17] or "",  -- DCGM1B2
             }
         elseif kind == "TRFC" and finPending then
             for _, f in ipairs(finPending) do
@@ -2866,7 +2951,7 @@ end
                     end
                     table.insert(hist, 1, { id = old.id, finished = true, token = old.token, heroic = old.heroic,
                         level = old.level, seed = old.seed, gearIlvl = old.gearIlvl, gearQuality = old.gearQuality,
-                        roster = old.roster, comp = old.comp, killed = old.killed, total = old.total,
+                        roster = old.roster, comp = old.comp, killed = old.killed, total = old.total, tier = old.tier,
                         deaths = old.deaths, pulls = old.pulls, elapsed = old.elapsed, members = mem,
                         result = "", endedAt = time() })
                 end
@@ -2880,7 +2965,8 @@ end
                         table.insert(hist, 1, h)
                     end
                     for _, k in ipairs({ "token", "heroic", "result", "elapsed", "killed", "total", "deaths", "regroups",
-                                         "cheats", "level", "seed", "gearIlvl", "gearQuality", "roster", "endedAt", "reason" }) do
+                                         "cheats", "level", "seed", "gearIlvl", "gearQuality", "roster", "endedAt", "reason",
+                                         "tier" }) do
                         if f[k] ~= nil then h[k] = f[k] end
                     end
                     if #f.comp > 0 then h.comp = f.comp end
