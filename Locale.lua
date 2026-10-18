@@ -309,6 +309,13 @@ local zh = {
     ["Follow this bot (camera)"] = "跟随观看这个机器人",
     ["Show its gear"] = "查看它的装备",
     ["Teleport next to it (.appear)"] = "传送到它身边（.appear）",
+    -- DCRZ2B
+    ["No one can resurrect"] = "无人可以复活",
+    ["Waiting for you to resurrect the party."] = "等待你复活队友（倒计时已暂停）。",
+    ["Corpse run in %ds: the dead bots revive at the entrance."] = "%d 秒后跑尸：死亡的机器人在副本门口复活，清本继续。",
+    ["Wait for me"] = "等我复活",
+    ["Run now"] = "现在跑尸",
+    ["Stop clear"] = "停止清本",
     -- DCGM1B
     ["Normal"] = "正常",
     ["Story"] = "剧情",

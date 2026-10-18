@@ -4021,6 +4021,9 @@ local function OnAddonMessage(prefix, message, channel, sender)
     elseif parts[1] and (parts[1]:sub(1, 2) == "TR" or parts[1]:sub(1, 2) == "TI") and DCTestOnAddon then
         -- Test-run list / bot gear for the test window (RebornWOW DCTEST2A).
         DCTestOnAddon(parts)
+    elseif parts[1] == "RZ" and DCRezOnAddon then
+        -- Corpse-run choice (RebornWOW DCRZ2B).
+        DCRezOnAddon(parts)
     elseif (parts[1] == "QROW" or parts[1] == "QLISTEND" or parts[1] == "QSTATE") and DCQueueOnAddon then
         -- Continuous-clear list and progress (RebornWOW DCQ1A).
         DCQueueOnAddon(parts)
@@ -5888,6 +5891,84 @@ end)()
         if buildError and DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage(buildError) end
         if not frame then return end
         if frame:IsShown() then frame:Hide() else frame:Show() end
+    end
+end)()
+
+-- Corpse-run choice (RebornWOW DCRZ2B). When nobody in your party can resurrect, the
+-- clear no longer stops: a corpse run counts down, then the dead bots revive at the
+-- entrance and the clear continues. Choose: wait for me / run now / stop.
+;(function()
+    local f = CreateFrame("Frame", "DungeonClearCorpseRunFrame", UIParent)
+    f:SetSize(360, 112)
+    f:SetPoint("TOP", UIParent, "TOP", 0, -140)
+    f:SetFrameStrata("DIALOG")
+    f:SetToplevel(true)
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    f:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    f:SetBackdropColor(0.08, 0.03, 0.03, 0.94)
+    f:SetBackdropBorderColor(0.6, 0.2, 0.2, 1.0)
+    f:Hide()
+
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOP", f, "TOP", 0, -12)
+    DCBind(title, "No one can resurrect")
+    title:SetTextColor(1, 0.4, 0.4)
+    local text = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    text:SetPoint("TOP", title, "BOTTOM", 0, -6)
+    text:SetWidth(330)
+
+    local dueAt, waiting = nil, false
+    local function Refresh()
+        if waiting then
+            text:SetText(DCL("Waiting for you to resurrect the party."))
+        elseif dueAt then
+            local left = math.max(0, math.ceil(dueAt - GetTime()))
+            text:SetText(string.format(DCL("Corpse run in %ds: the dead bots revive at the entrance."), left))
+        end
+    end
+    f:SetScript("OnUpdate", function() Refresh() end)
+
+    local function Btn(label, x, choice)
+        local b = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        b:SetSize(104, 22)
+        b:SetPoint("BOTTOM", f, "BOTTOM", x, 12)
+        DCBind(b, label)
+        b:SetScript("OnClick", function()
+            SendDcCommand("rezchoice", choice, true)
+            if choice == "wait" then waiting = true; Refresh()
+            elseif choice == "stop" then f:Hide() end
+        end)
+        return b
+    end
+    Btn("Wait for me", -110, "wait")
+    Btn("Run now", 0, "run")
+    Btn("Stop clear", 110, "stop")
+
+    function DCRezOnAddon(parts)
+        local kind = parts[2]
+        if kind == "count" then
+            waiting = false
+            dueAt = GetTime() + (tonumber(parts[3]) or 30)
+            Refresh()
+            f:Show()
+        elseif kind == "wait" then
+            waiting = true
+            Refresh()
+            f:Show()
+        elseif kind == "end" then
+            f:Hide()
+            dueAt, waiting = nil, false
+        end
     end
 end)()
 
