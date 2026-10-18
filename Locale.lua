@@ -309,6 +309,11 @@ local zh = {
     ["Follow this bot (camera)"] = "跟随观看这个机器人",
     ["Show its gear"] = "查看它的装备",
     ["Teleport next to it (.appear)"] = "传送到它身边（.appear）",
+    -- DCICON1A
+    ["Open the coordinate copy box. Also /dc gps."] = "打开坐标复制框。也可以输入 /dc gps。",
+    ["/dc icons hides or shows these icons."] = "输入 /dc icons 可以隐藏或显示这两个图标。",
+    ["Coordinate and chat log icons hidden. /dc icons shows them again."] = "已隐藏坐标复制和聊天记录图标，输入 /dc icons 重新显示。",
+    ["Coordinate and chat log icons shown."] = "已显示坐标复制和聊天记录图标。",
     -- DCCHAT1F
     ["My commands"] = "只看我的命令",
     ["Everything"] = "全部聊天",

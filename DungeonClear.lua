@@ -5972,6 +5972,104 @@ end)()
     end
 end)()
 
+-- RebornWOW DCICON1A: the coordinate box and the chat log panel each get their own
+-- minimap icon, so neither needs the Dungeon Clear window open. Same behaviour as the
+-- Dungeon Clear button: left-click toggles, drag moves it around the minimap (angle
+-- saved per icon). Names end in a letter so RebornDock can collect them. /dc icons
+-- hides or shows both.
+do
+    local toolIcons = {}
+
+    local function MakeToolIcon(name, texture, posKey, defaultPos, title, tip, onClick)
+        local b = CreateFrame("Button", name, Minimap)
+        b:SetFrameStrata("MEDIUM")
+        b:SetFrameLevel(8)
+        b:SetSize(31, 31)
+        b:RegisterForClicks("LeftButtonUp")
+        b:RegisterForDrag("LeftButton")
+        b:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+        local border = b:CreateTexture(nil, "OVERLAY")
+        border:SetSize(53, 53)
+        border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+        border:SetPoint("TOPLEFT")
+
+        local icon = b:CreateTexture(nil, "BACKGROUND")
+        icon:SetSize(20, 20)
+        icon:SetTexture(texture)
+        icon:SetPoint("CENTER", b, "CENTER", 0, 1)
+        icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+        b.icon = icon
+
+        local function Place()
+            local angle = math.rad(DungeonClearDB[posKey] or defaultPos)
+            b:ClearAllPoints()
+            b:SetPoint("CENTER", Minimap, "CENTER", 80 * math.cos(angle), 80 * math.sin(angle))
+        end
+        b.Place = Place
+
+        b:SetScript("OnDragStart", function(self)
+            self:SetScript("OnUpdate", function()
+                local mx, my = Minimap:GetCenter()
+                local scale = Minimap:GetEffectiveScale()
+                local px, py = GetCursorPosition()
+                px, py = px / scale, py / scale
+                DungeonClearDB[posKey] = math.deg(math.atan2(py - my, px - mx))
+                Place()
+            end)
+        end)
+        b:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
+        b:SetScript("OnClick", function() onClick() end)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+            GameTooltip:AddLine(DCL(title))
+            GameTooltip:AddLine(DCL(tip), 1, 1, 1, true)
+            GameTooltip:AddLine(DCL("Drag to reposition this button."), 1, 1, 1)
+            GameTooltip:AddLine(DCL("/dc icons hides or shows these icons."), 0.7, 0.7, 0.7, true)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+        Place()
+        toolIcons[#toolIcons + 1] = b
+        return b
+    end
+
+    MakeToolIcon("DungeonClearGpsButton", "Interface\\Icons\\INV_Misc_Map_01", "gpsIconPos", 225,
+        "Coordinates", "Open the coordinate copy box. Also /dc gps.",
+        function() if DCGpsToggle then DCGpsToggle() end end)
+    MakeToolIcon("DungeonClearChatLogButton", "Interface\\Icons\\INV_Misc_Note_01", "chatIconPos", 250,
+        "Chat log", "Command output and chat lines in a box you can copy from. Also /dc chat.",
+        function() if DCChatCopyToggle then DCChatCopyToggle() end end)
+
+    local function ApplyShown()
+        for _, b in ipairs(toolIcons) do
+            if DungeonClearDB.toolIconsHidden then b:Hide() else b:Show() end
+        end
+    end
+
+    function DCToolIconsToggle()
+        DungeonClearDB.toolIconsHidden = not DungeonClearDB.toolIconsHidden
+        ApplyShown()
+        if DungeonClearDB.toolIconsHidden then
+            DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ffDungeonClear|r " .. DCL("Coordinate and chat log icons hidden. /dc icons shows them again."))
+        else
+            DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ffDungeonClear|r " .. DCL("Coordinate and chat log icons shown."))
+        end
+    end
+
+    -- Saved angles arrive with ADDON_LOADED, after this file ran (see mmLoader).
+    local loader = CreateFrame("Frame")
+    loader:RegisterEvent("ADDON_LOADED")
+    loader:SetScript("OnEvent", function(self, _, name)
+        if name == AddonName then
+            for _, b in ipairs(toolIcons) do b.Place() end
+            ApplyShown()
+            self:UnregisterEvent("ADDON_LOADED")
+        end
+    end)
+end
+
 -- Slash Command Registration
 SLASH_DUNGEONCLEAR1 = "/dc"
 SlashCmdList["DUNGEONCLEAR"] = function(msg)
@@ -5992,6 +6090,9 @@ SlashCmdList["DUNGEONCLEAR"] = function(msg)
     elseif msg == "chat" then
         -- RebornWOW DCCHAT1A: chat log copy panel
         if DCChatCopyToggle then DCChatCopyToggle() end
+    elseif msg == "icons" then
+        -- RebornWOW DCICON1A: hide or show the coordinate / chat log minimap icons
+        if DCToolIconsToggle then DCToolIconsToggle() end
     else
         -- Parse "/dc <sub> [param]" and send via addon message
         local subCmd, param = msg:match("^(%S+)%s*(.*)$")
