@@ -1787,6 +1787,27 @@ end
         modeBtns[i] = b
     end
 
+    -- RebornWOW DCGM1B: cheat tier for the whole test party (GM). Cycles on click.
+    local TIERS = {
+        { key = "",       label = "Normal" },
+        { key = "story",  label = "Story" },
+        { key = "casual", label = "Casual" },
+        { key = "speed",  label = "Speed" },
+    }
+    local tierBtn
+    local function TierIndex()
+        local cur = DB().cheat or ""
+        for i, t in ipairs(TIERS) do if t.key == cur then return i end end
+        return 1
+    end
+    tierBtn = Button("Normal", 56, function()
+        local i = TierIndex() % #TIERS + 1
+        DB().cheat = TIERS[i].key
+        DCBind(tierBtn, TIERS[i].label)
+    end, "Cheat tier for the whole party (click to cycle). Normal: no cheats, real difficulty. Story: invincible + unlimited mana, normal damage, events play out. Casual: the same, bots deal half damage. Speed: also no cooldowns, instant casts, 10x damage - route checks only, a boss may die before its script finishes. A run with a tier is marked and kept out of rankings.")
+    tierBtn:SetPoint("LEFT", modeBtns[#modeBtns], "RIGHT", 4, 0)
+    DCBind(tierBtn, TIERS[TierIndex()].label)
+
     -- random-comp options
     y = y - 30
     local randomGroup = {}
@@ -1889,6 +1910,7 @@ end
             if seed and seed ~= "" then cmd = cmd .. " seed=" .. seed end
         end
         if heroicCheck:GetChecked() then cmd = cmd .. " heroic" end
+        if t.cheat and t.cheat ~= "" then cmd = cmd .. " cheat=" .. t.cheat end  -- DCGM1B
         t.ilvl, t.seed = ilvlBox:GetText(), seedBox:GetText()
         Send(cmd)
         if t.autoWatch then watchAt = GetTime() + 10 end

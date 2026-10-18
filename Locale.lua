@@ -309,6 +309,13 @@ local zh = {
     ["Follow this bot (camera)"] = "跟随观看这个机器人",
     ["Show its gear"] = "查看它的装备",
     ["Teleport next to it (.appear)"] = "传送到它身边（.appear）",
+    -- DCGM1B
+    ["Normal"] = "正常",
+    ["Story"] = "剧情",
+    ["Casual"] = "休闲",
+    ["Speed"] = "速通",
+    ["Cheat tier for the whole party (click to cycle). Normal: no cheats, real difficulty. Story: invincible + unlimited mana, normal damage, events play out. Casual: the same, bots deal half damage. Speed: also no cooldowns, instant casts, 10x damage - route checks only, a boss may die before its script finishes. A run with a tier is marked and kept out of rankings."] =
+        "作弊档（全队，只限 GM，点击切换）。正常：不作弊，测真实强度。剧情：无敌 + 无限法力，伤害不变，副本事件照常进行。休闲：同上，机器人伤害减半。速通：再加无冷却、瞬发、10 倍伤害，只用来查路线，首领可能在剧情脚本放完前就被打死。用了作弊档的测试会被标记，不进排行。",
     -- DCTEST7A
     ["Boss progress"] = "首领进度",
     ["Killed"] = "已击杀",
