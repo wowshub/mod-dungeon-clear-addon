@@ -3120,7 +3120,10 @@ end
     local myMenuFrame = CreateFrame("Frame", "DungeonClearMyPartyMenu", UIParent, "UIDropDownMenuTemplate")
     function DCMyPartyMenu()
         local function P(who, act)
-            Send(".dc party " .. who .. " " .. act)
+            -- DCGM1G: over the addon channel, so it also works while you are dead
+            -- (the client blocks chat from a corpse); the server runs .dc party.
+            out:AddMessage("|cff3da6ff> .dc party " .. who .. " " .. act .. "|r")
+            SendDcCommand("gmparty", who .. " " .. act)
             if DCTierRefreshSoon then DCTierRefreshSoon() end  -- DCGM1F: repaint the tag
         end
         local tiers = {}
