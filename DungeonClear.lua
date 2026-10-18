@@ -1066,6 +1066,25 @@ for i, seg in ipairs(SELFBOT_SEGS) do
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
     selfBotUI.btns[i] = b
 end
+-- RebornWOW DCGM1E: the "My party (GM)" menu (kill / raise / cheat tier for your own
+-- bots, DCGM1D) right on the main panel, at the end of the auto-play row. Kept in
+-- selfBotUI.btns so it hides and shows with the row (update() only walks the segs).
+do
+    local gm = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    gm:SetSize(32, 24)
+    gm:SetPoint("LEFT", selfBotUI.btns[#selfBotUI.btns], "RIGHT", 2, 0)
+    gm:SetText("GM")
+    gm:SetScript("OnClick", function() if DCMyPartyMenu then DCMyPartyMenu() end end)
+    gm:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(DCL("My party (GM)"))
+        GameTooltip:AddLine(DCL("Kill or raise the bots of the party YOU lead (not a test run), or yourself, to test what happens when nobody can resurrect. Also /dc gm. Other real players are never touched."), 1, 1, 1, true)
+        GameTooltip:AddLine(DCL("Cheat tier for my bots"), 1, 0.82, 0)
+        GameTooltip:Show()
+    end)
+    gm:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    selfBotUI.btns[#selfBotUI.btns + 1] = gm
+end
 
 selfBotUI.update = function()
     for i, seg in ipairs(SELFBOT_SEGS) do
