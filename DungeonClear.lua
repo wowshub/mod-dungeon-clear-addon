@@ -5890,6 +5890,35 @@ do
     end
     end)()
 
+    -- ------------------------------------------------------------ menus close on an outside click (RebornWOW DCUI3C7)
+    -- The stock dropdown only closes on a click in the game world (or after its timer),
+    -- so a right-click menu stayed open while the player clicked around the panel. A
+    -- watcher on DropDownList1 (it only runs while a menu is open) closes a menu that a
+    -- DungeonClear frame opened on any NEW mouse press outside the menu lists; a
+    -- right-click on another row then closes the old menu and opens the new one.
+    ;(function()
+    if not DropDownList1 then return end
+    local watch = CreateFrame("Frame", nil, DropDownList1)
+    local wasDown = true   -- the press that opened the menu does not count
+    local function OurMenu()
+        local m = UIDROPDOWNMENU_OPEN_MENU
+        local name = (type(m) == "table" and m.GetName and m:GetName()) or (type(m) == "string" and m) or ""
+        return name:sub(1, 12) == "DungeonClear"
+    end
+    local function Down()
+        return (IsMouseButtonDown and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton"))) and true or false
+    end
+    watch:SetScript("OnShow", function() wasDown = true end)
+    watch:SetScript("OnUpdate", function()
+        local down = Down()
+        if down and not wasDown and OurMenu() then
+            local inside = MouseIsOver(DropDownList1) or (DropDownList2 and DropDownList2:IsShown() and MouseIsOver(DropDownList2))
+            if not inside then CloseDropDownMenus() end
+        end
+        wasDown = down
+    end)
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
