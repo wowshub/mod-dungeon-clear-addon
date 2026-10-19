@@ -4779,7 +4779,11 @@ do
     end)
     local bgBtn = CreateFrame("Button", nil, col5, "UIPanelButtonTemplate")
     bgBtn:SetSize(64, 20)
-    bgBtn:SetPoint("RIGHT", smaller, "LEFT", -4, 0)
+    -- RebornWOW DCUI3B7: background / - / + at column 5's bottom-left; its top-right now
+    -- holds the window's header buttons (see DCShellLayout).
+    bgBtn:SetPoint("BOTTOMLEFT", col5, "BOTTOMLEFT", 10, 10)
+    smaller:ClearAllPoints(); smaller:SetPoint("LEFT", bgBtn, "RIGHT", 4, 0)
+    bigger:ClearAllPoints(); bigger:SetPoint("LEFT", smaller, "RIGHT", 2, 0)
     local function PaintBgBtn() bgBtn:SetText(DCL("Background") .. " " .. BGS[BgIndex()][1]:gsub("none", "-")) end
     bgBtn:SetScript("OnClick", function(self)
         bgChoice = BGS[BgIndex() % #BGS + 1][1]
@@ -4799,6 +4803,7 @@ do
     function DCShellLayout()
         if DungeonClearDB.tinyMode then
             DCShellTargetHeight = nil
+            closeBtn:ClearAllPoints(); closeBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
             shell:Hide()
             frame:SetScale(1)
             frame:SetBackdropColor(0.03, 0.03, 0.05, 0.90)
@@ -4808,6 +4813,8 @@ do
         end
         frame:SetScale(Scale())
         frame:SetBackdropColor(0, 0, 0, 0)      -- the window is the centre column now
+        -- DCUI3B7: GPS / Test / EN / Tiny / close hang off closeBtn -> the panel's top-right
+        closeBtn:ClearAllPoints(); closeBtn:SetPoint("TOPRIGHT", col5, "TOPRIGHT", -4, -4)
         if DCShellTargetHeight ~= SHELL_H - PAD * 2 then   -- DCUI3B5: boss list to the bottom
             DCShellTargetHeight = SHELL_H - PAD * 2
             UpdateFrameHeight()
