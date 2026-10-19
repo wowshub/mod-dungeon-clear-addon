@@ -4384,6 +4384,10 @@ do
             { text = d.name .. "  |cff999999(" .. d.sizes .. ")|r", isTitle = true, notCheckable = true },
             { text = DCL("Teleport to the entrance (GM)"), notCheckable = true, disabled = not d.supported or (d.x == 0 and d.y == 0),
               func = function() Chat(string.format(".go xyz %.1f %.1f %.1f %d", d.x, d.y, d.z, d.mapId)) end },
+            -- RebornWOW DCGM2A: you and the whole party
+            { text = DCL("Take the whole party to the entrance (GM)"), notCheckable = true,
+              disabled = not d.supported or (d.x == 0 and d.y == 0) or not (shell.InGroup and shell.InGroup()),
+              func = function() if shell.groupGo then shell.groupGo(d) end end },
             { text = DCL("Start a bot test here (GM)"), notCheckable = true, disabled = not first,
               func = function() Chat(".dc test start " .. first) end },
             { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
@@ -6720,6 +6724,52 @@ do
         Update()
     end)
     shell.partyState = Update
+    end)()
+
+    -- ------------------------------------------------------------ whole party to the entrance (RebornWOW DCGM2A)
+    -- Dungeon list right-click: the GM teleports to the entrance (.go xyz) and, once
+    -- arrived -- a loading screen or zone change, then 1.5 s; or 4 s when nothing
+    -- changes (already in that sub-zone) -- summons the whole party there with
+    -- .groupsummon <own name>. Gives up after 60 s. Own function (200-local limit).
+    ;(function()
+    local pend
+    local w = CreateFrame("Frame", nil, UIParent)
+    for _, e in ipairs({ "PLAYER_LEAVING_WORLD", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS" }) do
+        pcall(w.RegisterEvent, w, e)
+    end
+    w:SetScript("OnEvent", function(_, ev)
+        if not pend then return end
+        if ev == "PLAYER_LEAVING_WORLD" then pend.loading = true return end
+        pend.loading = false; pend.moved = true; pend.t = 0
+    end)
+    w:SetScript("OnUpdate", function(_, e)
+        if not pend then return end
+        e = e or 0
+        pend.total = pend.total + e
+        if pend.total > 60 then pend = nil; return end
+        if pend.loading then return end
+        pend.t = pend.t + e
+        if (pend.moved and pend.t >= 1.5) or (not pend.moved and pend.t >= 4) then
+            pend = nil
+            local me = UnitName("player")
+            if me then
+                SendChatMessage(".groupsummon " .. me, "SAY")
+                DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC] " .. DCL("Summoning the party to the entrance.") .. "|r")
+            end
+        end
+    end)
+    shell.InGroup = function()
+        return (GetNumPartyMembers() or 0) > 0 or (GetNumRaidMembers() or 0) > 0
+    end
+    shell.groupGo = function(d)
+        if not shell.InGroup() then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[DC] " .. DCL("You are not in a party.") .. "|r")
+            return
+        end
+        pend = { t = 0, total = 0 }
+        SendChatMessage(string.format(".go xyz %.1f %.1f %.1f %d", d.x, d.y, d.z, d.mapId), "SAY")
+        DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC] " .. DCL("Teleporting to the entrance; the party follows when you arrive.") .. "|r")
+    end
     end)()
 
     -- ------------------------------------------------------------ server replies

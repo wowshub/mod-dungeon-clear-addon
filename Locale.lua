@@ -335,6 +335,11 @@ local zh = {
     -- DCUI3D9
     -- DCSB2B
     -- DCUI3E1
+    -- DCGM2A
+    ["Take the whole party to the entrance (GM)"] = "带全队去入口（GM）",
+    ["Summoning the party to the entrance."] = "正在把队伍召唤到入口。",
+    ["You are not in a party."] = "你不在队伍中。",
+    ["Teleporting to the entrance; the party follows when you arrive."] = "正在传送到入口，到达后把队伍召唤过来。",
     ["not nearby"] = "不在附近",
     ["far"] = "远",
     ["Your party is running dungeon clear (tank: %s). Pick a role on the flashing Auto-play row of the panel and the AI plays your character with the party (suggested: %s); pick Manual to play yourself."] = "队伍正在清本（坦克：%s）。在面板闪烁的“托管”一栏选一个职责，AI 就代你和队伍一起清本（建议：%s），不用再按开始；选“手动”就自己玩。",
