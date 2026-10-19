@@ -4474,6 +4474,7 @@ do
     end
     local function RefreshParty()
         if not col4:IsVisible() then return end
+        if shell.c2 and shell.c2.active then return end  -- DCUI3C2: groups page shown
         local n = GetNumRaidMembers() or 0
         if n > 0 then RefreshRaid(n) return end
         for _, r in ipairs(rrow) do r:Hide() end
@@ -4697,6 +4698,7 @@ do
             end
         end
         menu[#menu + 1] = C1.FavItem(name)
+        if shell.c2 and shell.c2.MenuItems then shell.c2.MenuItems(menu, name, token, UnitLevel(unit)) end  -- DCUI3C2
         add({ text = CANCEL, func = function() CloseDropDownMenus() end })
         C1.Show(menu)
     end
@@ -4711,6 +4713,7 @@ do
             if d.online then add({ text = DCL("Whisper"), func = function() ChatFrame_SendTell(d.name) end }) end
         end
         menu[#menu + 1] = C1.FavItem(d.name)
+        if not d.npc and shell.c2 and shell.c2.MenuItems then shell.c2.MenuItems(menu, d.name, CLASS_BY_ID[d.cls], d.level) end  -- DCUI3C2
         add({ text = CANCEL, func = function() CloseDropDownMenus() end })
         C1.Show(menu)
     end
@@ -4764,7 +4767,7 @@ do
         r:SetScript("OnLeave", function() GameTooltip:Hide() end)
         r:SetScript("OnDragStart", function(self)
             local d = self.data
-            if not d or d.npc or InGroup(d.name) then return end
+            if not d or d.npc or (InGroup(d.name) and not shell.c2.active) then return end  -- DCUI3C2
             C1.drag = d
             GameTooltip:Hide()
             SetClassIcon(ghost.icon, CLASS_BY_ID[d.cls])
@@ -4776,9 +4779,390 @@ do
             local d = C1.drag
             C1.drag = nil
             ghost:Hide(); C1.Border(false)
-            if d and MouseIsOver(col4) then Invite(d) end
+            if d and MouseIsOver(col4) then
+                if shell.c2.active then shell.c2.Drop(d) else Invite(d) end  -- DCUI3C2
+            end
         end)
     end
+    end)()
+
+    -- ------------------------------------------------------------ favourite groups (RebornWOW DCUI3C2)
+    -- Design doc §16.3. Column 4 gets two tabs, [Party] [Groups]. Groups are filtered by
+    -- size (5/10/20/25/40); click a group to open it and see its members; drag a character
+    -- from the invite list onto the column to add it to the open group; "Form" invites the
+    -- whole group: your own offline characters are logged in (playerbots puts them in your
+    -- group and turns a full party into a raid), online characters are invited. Saved per
+    -- account in DungeonClearDB.dcGroups (names, class, level, role). Its own function and
+    -- a table on the shell: the main chunk is at its 200-local limit.
+    shell.c2 = { active = false, size = 5, offset = 0 }
+    ;(function()
+    local C2 = shell.c2
+    local SIZES = { 5, 10, 20, 25, 40 }
+    local function Say(m) DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC]|r " .. m) end
+    local function Groups()
+        DungeonClearDB.dcGroups = DungeonClearDB.dcGroups or {}
+        return DungeonClearDB.dcGroups
+    end
+    local function SizeFor(n) for _, s in ipairs(SIZES) do if n <= s then return s end end return 40 end
+    local function RoleFromUnit(unit)
+        local r = RoleOf(unit)
+        return (r == "Tank" and "tank") or (r == "Heal" and "heal") or (r == "DPS" and "dps") or nil
+    end
+    local ROLE_SHOW = { tank = { "Tank", "|cff3da6ff" }, heal = { "Heal", "|cff40ff40" }, dps = { "DPS", "|cffff7f50" } }
+    local function Summary(g)
+        local t, h, d = 0, 0, 0
+        for _, m in ipairs(g.members) do
+            if m.role == "tank" then t = t + 1 elseif m.role == "heal" then h = h + 1 elseif m.role == "dps" then d = d + 1 end
+        end
+        return string.format("%s%d %s%d %s%d", DCL("Tank (short)"), t, DCL("Healer (short)"), h, DCL("DPS (short)"), d)
+    end
+    local function Find(g, name)
+        for i, m in ipairs(g.members) do if m.name == name then return i end end
+    end
+
+    -- tabs
+    local tabGroups = SmallButton(col4, "Groups (tab)", 60)
+    tabGroups:SetPoint("TOPRIGHT", col4, "TOPRIGHT", -8, -8)
+    local tabParty = SmallButton(col4, "Party (tab)", 48)
+    tabParty:SetPoint("RIGHT", tabGroups, "LEFT", -4, 0)
+
+    -- the groups page
+    local gp = CreateFrame("Frame", nil, col4)
+    gp:SetPoint("TOPLEFT", col4, "TOPLEFT", 8, -36)
+    gp:SetPoint("BOTTOMRIGHT", col4, "BOTTOMRIGHT", -8, 8)
+    gp:Hide()
+    gp:EnableMouseWheel(true)
+    local sizeLabel = gp:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(sizeLabel, 13)
+    sizeLabel:SetPoint("TOPLEFT", gp, "TOPLEFT", 2, -4)
+    DCBind(sizeLabel, "Size:")
+    local sizeBtn = {}
+    for i, n in ipairs(SIZES) do
+        local b = CreateFrame("Button", nil, gp, "UIPanelButtonTemplate")
+        b:SetSize(34, 20); b:SetText(tostring(n))
+        b:SetPoint("LEFT", sizeLabel, "RIGHT", 4 + (i - 1) * 36, 0)
+        b:SetScript("OnClick", function() C2.size = n; C2.offset = 0; C2.Render() end)
+        sizeBtn[n] = b
+    end
+    local btnSave = SmallButton(gp, "Save current party", 120)
+    btnSave:SetPoint("TOPLEFT", gp, "TOPLEFT", 0, -26)
+    local btnNew = SmallButton(gp, "New group", 70)
+    btnNew:SetPoint("LEFT", btnSave, "RIGHT", 4, 0)
+    local empty = gp:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); Crisp(empty, 13)
+    empty:SetPoint("TOPLEFT", gp, "TOPLEFT", 4, -56); empty:SetPoint("RIGHT", gp, "RIGHT", -4, 0)
+    empty:SetJustifyH("LEFT")
+    local ROWS, RH = 21, 25
+    local rows = {}
+    for i = 1, ROWS do
+        local r = Row(gp, RH - 2)
+        r:SetPoint("TOPLEFT", gp, "TOPLEFT", 0, -52 - (i - 1) * RH)
+        r:SetPoint("RIGHT", gp, "RIGHT", 0, 0)
+        r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(16, 16)
+        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.info, 12)
+        r.info:SetJustifyH("RIGHT")
+        r.text = r:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(r.text, 13)
+        r.text:SetPoint("LEFT", r.icon, "RIGHT", 5, 0); r.text:SetPoint("RIGHT", r.info, "LEFT", -4, 0)
+        r.text:SetJustifyH("LEFT")
+        r.form = SmallButton(r, "Form", 46); r.form:SetPoint("RIGHT", r, "RIGHT", -2, 0)
+        rows[i] = r
+    end
+
+    function C2.Render()
+        if not C2.active then return end
+        for _, n in ipairs(SIZES) do if n == C2.size then sizeBtn[n]:LockHighlight() else sizeBtn[n]:UnlockHighlight() end end
+        local disp = {}
+        for _, g in ipairs(Groups()) do
+            if g.size == C2.size then
+                disp[#disp + 1] = { kind = "group", g = g }
+                if C2.open == g then
+                    for mi, m in ipairs(g.members) do disp[#disp + 1] = { kind = "member", g = g, m = m, mi = mi } end
+                    if #g.members < g.size then disp[#disp + 1] = { kind = "hint", g = g } end
+                end
+            end
+        end
+        empty:SetText(#disp == 0 and DCL("No favourite groups of this size yet. Form a party and click 'Save current party', or click 'New group' and drag characters from the right into it.") or "")
+        C2.offset = math.max(0, math.min(C2.offset, #disp - ROWS))
+        for i, r in ipairs(rows) do
+            local e = disp[i + C2.offset]
+            r.e = e
+            if not e then r:Hide() else
+                r.icon:ClearAllPoints(); r.info:ClearAllPoints()
+                if e.kind == "group" then
+                    local open = C2.open == e.g
+                    r.icon:SetPoint("LEFT", r, "LEFT", 4, 0)
+                    r.icon:SetTexture(open and "Interface\\Buttons\\UI-MinusButton-Up" or "Interface\\Buttons\\UI-PlusButton-Up")
+                    r.icon:SetTexCoord(0, 1, 0, 1)
+                    r.text:SetText("|cffffd100" .. e.g.name .. "|r")
+                    r.info:SetPoint("RIGHT", r, "RIGHT", -52, 0)
+                    r.info:SetText(string.format("%d/%d  %s", #e.g.members, e.g.size, Summary(e.g)))
+                    r.bgt:SetTexture(0.08, 0.13, 0.22, 0.85)
+                    r.form:Show()
+                elseif e.kind == "member" then
+                    r.icon:SetPoint("LEFT", r, "LEFT", 22, 0)
+                    SetClassIcon(r.icon, e.m.cls)
+                    r.text:SetText(ClassHex(e.m.cls) .. e.m.name .. "|r")
+                    r.info:SetPoint("RIGHT", r, "RIGHT", -6, 0)
+                    local rs = e.m.role and ROLE_SHOW[e.m.role]
+                    r.info:SetText((e.m.level and e.m.level > 0 and (DCL("Lv") .. " " .. e.m.level .. "  ") or "")
+                                   .. (rs and (rs[2] .. DCL(rs[1]) .. "|r") or ""))
+                    r.bgt:SetTexture(0.03, 0.04, 0.06, 0.72)
+                    r.form:Hide()
+                else
+                    r.icon:SetPoint("LEFT", r, "LEFT", 22, 0)
+                    r.icon:SetTexture(nil)
+                    r.text:SetText("|cff9a9a9a" .. string.format(DCL("Drag a character here to add it (%d more)"), e.g.size - #e.g.members) .. "|r")
+                    r.info:SetPoint("RIGHT", r, "RIGHT", -6, 0); r.info:SetText("")
+                    r.bgt:SetTexture(0.03, 0.04, 0.06, 0.45)
+                    r.form:Hide()
+                end
+                r:Show()
+            end
+        end
+    end
+
+    function C2.SetActive(on)
+        C2.active = on
+        if on then tabGroups:LockHighlight(); tabParty:UnlockHighlight() else tabParty:LockHighlight(); tabGroups:UnlockHighlight() end
+        if on then
+            for _, r in ipairs(prow) do r:Hide() end
+            for _, r in ipairs(rrow) do r:Hide() end
+            gp:Show()
+            C2.Render()
+        else
+            gp:Hide()
+            RefreshParty()
+        end
+    end
+    tabParty:SetScript("OnClick", function() C2.SetActive(false) end)
+    tabGroups:SetScript("OnClick", function() C2.SetActive(true) end)
+    tabParty:LockHighlight()
+    gp:SetScript("OnMouseWheel", function(_, delta) C2.offset = C2.offset - delta * 3; C2.Render() end)
+
+    -- members
+    function C2.AddMember(g, name, cls, level, role)
+        if Find(g, name) then Say(string.format(DCL("%s is already in this group."), name)); return end
+        if #g.members >= g.size then Say(string.format(DCL("This group is full (%d)."), g.size)); return end
+        table.insert(g.members, { name = name, cls = cls, level = level, role = role })
+        C2.Render()
+    end
+    function C2.Drop(d)
+        if not C2.open then Say(DCL("Open a favourite group first (click its name), then drop characters on it.")); return end
+        C2.AddMember(C2.open, d.name, CLASS_BY_ID[d.cls], d.level)
+    end
+    local function CurrentMembers()
+        local list = {}
+        local function add(u)
+            if UnitExists(u) then
+                local _, tok = UnitClass(u)
+                list[#list + 1] = { name = UnitName(u), cls = tok, level = UnitLevel(u), role = RoleFromUnit(u) }
+            end
+        end
+        local n = GetNumRaidMembers()
+        if n > 0 then for i = 1, n do add("raid" .. i) end
+        else add("player"); for i = 1, 4 do add("party" .. i) end end
+        return list
+    end
+    -- items for the right-click menus of both lists: "add to favourite group ..."
+    function C2.MenuItems(menu, name, cls, level)
+        local list = Groups()
+        if #list == 0 or not name then return end
+        menu[#menu + 1] = { text = DCL("Add to favourite group:"), isTitle = true, notCheckable = true }
+        for i, g in ipairs(list) do
+            if i > 12 then break end
+            menu[#menu + 1] = { text = string.format("  %s  |cff999999%d/%d|r", g.name, #g.members, g.size), notCheckable = true,
+                                disabled = Find(g, name) ~= nil or #g.members >= g.size,
+                                func = function() C2.AddMember(g, name, cls, level) end }
+        end
+    end
+
+    -- names: one popup for new / rename, one for delete
+    StaticPopupDialogs["DUNGEONCLEAR_GROUP_NAME"] = {
+        text = "%s", button1 = ACCEPT, button2 = CANCEL, hasEditBox = 1, maxLetters = 32,
+        OnShow = function(self)
+            local eb = _G[self:GetName() .. "EditBox"]
+            eb:SetText((C2.pending and C2.pending.default) or ""); eb:HighlightText(); eb:SetFocus()
+        end,
+        OnAccept = function(self) C2.NameDone(_G[self:GetName() .. "EditBox"]:GetText()) end,
+        EditBoxOnEnterPressed = function(self) C2.NameDone(self:GetText()); self:GetParent():Hide() end,
+        EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
+        timeout = 0, whileDead = 1, hideOnEscape = 1,
+    }
+    StaticPopupDialogs["DUNGEONCLEAR_GROUP_DELETE"] = {
+        text = "%s", button1 = YES, button2 = NO,
+        OnAccept = function()
+            local g = C2.pendingDel
+            C2.pendingDel = nil
+            for i, x in ipairs(Groups()) do if x == g then table.remove(Groups(), i); break end end
+            if C2.open == g then C2.open = nil end
+            C2.Render()
+        end,
+        timeout = 0, whileDead = 1, hideOnEscape = 1,
+    }
+    function C2.NameDone(text)
+        local p = C2.pending
+        C2.pending = nil
+        text = text and text:gsub("^%s+", ""):gsub("%s+$", "") or ""
+        if not p or text == "" then return end
+        if p.mode == "new" then
+            local g = { name = text, size = p.size, members = p.members or {} }
+            table.insert(Groups(), g)
+            C2.size, C2.open = g.size, g
+        elseif p.mode == "rename" then
+            p.g.name = text
+        end
+        C2.Render()
+    end
+    local function AskName(p, prompt)
+        C2.pending = p
+        StaticPopup_Show("DUNGEONCLEAR_GROUP_NAME", prompt)
+    end
+    local function DefaultName() return string.format(DCL("Favourite group %d"), #Groups() + 1) end
+    btnSave:SetScript("OnClick", function()
+        local list = CurrentMembers()
+        if #list < 2 then Say(DCL("Form a party first, then save it.")); return end
+        local size = SizeFor(#list)
+        AskName({ mode = "new", size = size, members = list, default = DefaultName() }, DCL("Name this favourite group:"))
+    end)
+    btnNew:SetScript("OnClick", function()
+        AskName({ mode = "new", size = C2.size, members = {}, default = DefaultName() }, DCL("Name this favourite group:"))
+    end)
+
+    -- one click: invite the whole group (botinfo says who is online / yours)
+    local qf = CreateFrame("Frame")
+    qf:Hide()
+    local qacc = 0
+    function C2.Form(g)
+        local names, me = {}, UnitName("player")
+        for _, m in ipairs(g.members) do
+            if m.name ~= me and not InGroup(m.name) then names[#names + 1] = m.name end
+        end
+        if #names == 0 then Say(DCL("Everyone in this group is already with you.")); return end
+        local w = { size = g.size, names = {}, got = {}, queue = {}, offline = {}, endAt = GetTime() + 6 }
+        for _, n in ipairs(names) do w.names[n] = true end
+        C2.want = w
+        local chunk = ""
+        for _, n in ipairs(names) do
+            if #chunk + #n + 1 > 200 then SendDcCommand("botinfo", "|" .. chunk, true); chunk = "" end
+            chunk = chunk == "" and n or (chunk .. "," .. n)
+        end
+        SendDcCommand("botinfo", "|" .. chunk, true)
+        Say(string.format(DCL("Forming %s: %d to invite..."), g.name, #names))
+        qacc = 0
+        qf:Show()
+    end
+    function C2.OnBI(kind, msg)
+        local w = C2.want
+        if not w then return end
+        if kind == "BI" then
+            local _, name, _, _, _, _, online, mine = strsplit("\t", msg)
+            if name and w.names[name] and not w.got[name] then
+                w.got[name] = true
+                if online == "1" then w.queue[#w.queue + 1] = { name = name }
+                elseif mine == "1" then w.queue[#w.queue + 1] = { name = name, add = true }
+                else w.offline[#w.offline + 1] = name end
+            end
+        elseif kind == "BI_END" then
+            w.endAt = math.min(w.endAt, GetTime() + 1.5)
+        end
+    end
+    qf:SetScript("OnUpdate", function(self, elapsed)
+        qacc = qacc + (elapsed or 0)
+        if qacc < 0.6 then return end
+        qacc = 0
+        local w = C2.want
+        if not w then self:Hide(); return end
+        local item = table.remove(w.queue, 1)
+        if item then
+            if item.add then
+                Chat(".playerbot bot add " .. item.name)
+            else
+                if w.size > 5 and GetNumRaidMembers() == 0 and GetNumPartyMembers() >= 4 and IsPartyLeader() then
+                    ConvertToRaid()
+                    table.insert(w.queue, 1, item)   -- invite after the raid exists
+                    return
+                end
+                InviteUnit(item.name)
+            end
+            return
+        end
+        if GetTime() < w.endAt then return end
+        local missing = {}
+        for n in pairs(w.names) do if not w.got[n] then missing[#missing + 1] = n end end
+        if #missing > 0 then Say(string.format(DCL("Not found (renamed or deleted?): %s"), table.concat(missing, ", "))) end
+        if #w.offline > 0 then Say(string.format(DCL("Offline and not on your account, cannot be logged in: %s"), table.concat(w.offline, ", "))) end
+        Say(DCL("Group invitations sent."))
+        C2.want = nil
+        self:Hide()
+    end)
+
+    -- menus on the rows
+    local function GroupMenu(g)
+        local menu = { { text = g.name .. "  |cff999999" .. #g.members .. "/" .. g.size .. "|r", isTitle = true, notCheckable = true } }
+        local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
+        add({ text = DCL("Form the whole group"), func = function() C2.Form(g) end })
+        add({ text = DCL("Rename"), func = function() AskName({ mode = "rename", g = g, default = g.name }, DCL("New name:")) end })
+        add({ text = DCL("Replace with the current party"), func = function()
+            local list = CurrentMembers()
+            while #list > g.size do table.remove(list) end
+            g.members = list
+            C2.Render()
+        end })
+        add({ text = DCL("Copy"), func = function()
+            local copy = { name = string.format(DCL("%s (copy)"), g.name), size = g.size, members = {} }
+            for _, m in ipairs(g.members) do copy.members[#copy.members + 1] = { name = m.name, cls = m.cls, level = m.level, role = m.role } end
+            table.insert(Groups(), copy)
+            C2.Render()
+        end })
+        add({ text = "|cffff5050" .. DCL("Delete") .. "|r", func = function()
+            C2.pendingDel = g
+            StaticPopup_Show("DUNGEONCLEAR_GROUP_DELETE", string.format(DCL("Delete the favourite group %s?"), g.name))
+        end })
+        add({ text = CANCEL, func = function() CloseDropDownMenus() end })
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
+    end
+    local function MemberMenu(g, mi)
+        local m = g.members[mi]
+        if not m then return end
+        local menu = { { text = ClassHex(m.cls) .. m.name .. "|r", isTitle = true, notCheckable = true } }
+        local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
+        add({ text = DCL("Invite this character"), disabled = InGroup(m.name), func = function()
+            if shell.c1 and shell.c1.myChars[m.name] then Chat(".playerbot bot add " .. m.name) else InviteUnit(m.name) end
+        end })
+        for _, rk in ipairs({ { "tank", "Role: tank" }, { "heal", "Role: healer" }, { "dps", "Role: DPS" } }) do
+            menu[#menu + 1] = { text = DCL(rk[2]), checked = m.role == rk[1],
+                                func = function() m.role = (m.role ~= rk[1]) and rk[1] or nil; C2.Render() end }
+        end
+        add({ text = DCL("Remove from this group"), func = function() table.remove(g.members, mi); C2.Render() end })
+        add({ text = CANCEL, func = function() CloseDropDownMenus() end })
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
+    end
+    for _, r in ipairs(rows) do
+        r:SetScript("OnClick", function(self, button)
+            local e = self.e
+            if not e then return end
+            if e.kind == "group" then
+                if button == "RightButton" then GroupMenu(e.g)
+                else C2.open = (C2.open ~= e.g) and e.g or nil; C2.Render() end
+            elseif e.kind == "member" and button == "RightButton" then
+                MemberMenu(e.g, e.mi)
+            end
+        end)
+        r.form:SetScript("OnClick", function(self) local e = self:GetParent().e; if e and e.g then C2.Form(e.g) end end)
+        r:SetScript("OnEnter", function(self)
+            local e = self.e
+            if not e or e.kind == "hint" then return end
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+            if e.kind == "group" then
+                GameTooltip:AddLine(e.g.name)
+                GameTooltip:AddLine(DCL("Click: open / close.  Right-click: more"), 0.7, 0.7, 0.7)
+            else
+                GameTooltip:AddLine(e.m.name)
+                GameTooltip:AddLine(DCL("Right-click: more actions"), 0.7, 0.7, 0.7)
+            end
+            GameTooltip:Show()
+        end)
+        r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    DCLoc.OnChange(function() C2.Render() end)
     end)()
 
     -- ------------------------------------------------------------ server replies
@@ -4793,6 +5177,7 @@ do
         if event ~= "CHAT_MSG_ADDON" then partyDirty = true; rosterDirty = true; return end
         if prefix ~= "DC" or type(msg) ~= "string" then return end
         local kind = msg:match("^([^\t]+)")
+        if (kind == "BI" or kind == "BI_END") and shell.c2 and shell.c2.OnBI then shell.c2.OnBI(kind, msg) end  -- DCUI3C2
         if kind == "DL_START" then dlPending = {}
         elseif kind == "DL" and dlPending then
             local _, mapId, raid, sizes, level, rec, heroic, exp, name, tokens, x, y, z = strsplit("\t", msg)
