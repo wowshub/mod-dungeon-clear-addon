@@ -318,6 +318,23 @@ local zh = {
     ["Empty slot"] = "空位",
     ["raid"] = "团队",
     -- DCUI3B
+    -- DCUI3C1
+    ["Leave the group"] = "离开队伍",
+    ["Inspect (gear, talents)"] = "观察（装备、天赋）",
+    ["Whisper"] = "密语",
+    ["Bot: follow me"] = "机器人：跟随我",
+    ["Bot: stay here"] = "机器人：原地停留",
+    ["Bot: summon to me"] = "机器人：召唤到身边",
+    ["Log this character out"] = "让这个角色下线",
+    ["Remove from group"] = "移出队伍",
+    ["Make leader"] = "设为队长",
+    ["Move to group %d"] = "移到第 %d 小队",
+    ["Add to favourite characters"] = "加入常用角色",
+    ["Remove from favourite characters"] = "移出常用角色",
+    ["Right-click: more actions"] = "右键：更多操作",
+    ["Log in and invite"] = "上线并邀请",
+    ["NPCBots are managed with the NPCBot commands."] = "NPC 机器人请用 NPCBot 命令管理。",
+    ["Drag onto My party to invite"] = "左键拖到“我的队伍”即可邀请",
     ["Drag: scale the whole panel"] = "拖动：缩放整个面板",  -- DCUI3B5
     ["Double-click: fit the screen"] = "双击：恢复适合屏幕的大小",  -- DCUI3B5
     ["Unsupported"] = "未支持",  -- DCUI3B4

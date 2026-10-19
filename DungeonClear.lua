@@ -4407,10 +4407,12 @@ do
         if not unit or not UnitExists(unit) then
             r.icon:SetTexture("Interface\\PaperDoll\\UI-Backpack-EmptySlot"); r.icon:SetTexCoord(0, 1, 0, 1)
             r.name:SetText("|cff808080" .. DCL("Empty slot") .. "|r"); r.info:SetText(""); r.role:SetText("")
+            r.unit = nil  -- DCUI3C1
             r:SetBackdropColor(0.04, 0.05, 0.07, 0.45)
             return
         end
         r:SetBackdropColor(0.06, 0.08, 0.12, 0.70)
+        r.unit = unit  -- DCUI3C1: for the right-click menu
         local locClass, token = UnitClass(unit)
         SetClassIcon(r.icon, token)
         r.name:SetText(ClassHex(token) .. (UnitName(unit) or "?") .. "|r")
@@ -4453,6 +4455,7 @@ do
         raidOffset = math.max(0, math.min(raidOffset, #list - RAID_ROWS))
         for i, r in ipairs(rrow) do
             local d = list[i + raidOffset]
+            r.unit = d and d.unit  -- DCUI3C1
             if not d then r:Hide() else
                 SetClassIcon(r.icon, d.token)
                 r.name:SetText(ClassHex(d.token) .. d.name .. "|r")
@@ -4645,6 +4648,139 @@ do
     end
     col5:SetScript("OnMouseWheel", function(_, delta) rosterOffset = rosterOffset - delta * 3; DCShellRenderRoster() end)
 
+    -- ------------------------------------------------------------ actions (RebornWOW DCUI3C1)
+    -- Design doc §16.1/16.2: right-click menus on both lists, and drag a character from
+    -- the invite list onto "My party" to invite it. One table holds the helpers (the
+    -- main chunk's local budget: it is at 200), in a function of its own; the table hangs
+    -- on the shell so the reply handler below can reach it.
+    shell.c1 = { myChars = {} }       -- myChars: this account's characters (from "account" rows)
+    ;(function()
+    local C1 = shell.c1
+    C1.IsLeader = function()
+        if GetNumRaidMembers() > 0 then return IsRaidLeader() or IsRaidOfficer() end
+        return IsPartyLeader()
+    end
+    C1.Whisper = function(name, text) SendChatMessage(text, "WHISPER", nil, name) end
+    C1.Show = function(menu) EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU") end
+    C1.FavItem = function(name)
+        return { text = IsFav(name) and DCL("Remove from favourite characters") or DCL("Add to favourite characters"),
+                 notCheckable = true, func = function() ToggleFav(name); DCShellRenderRoster() end }
+    end
+    C1.PartyMenu = function(unit)
+        local name = unit and UnitName(unit)
+        if not name then return end
+        local _, token = UnitClass(unit)
+        local menu = { { text = ClassHex(token) .. name .. "|r", isTitle = true, notCheckable = true } }
+        local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
+        if UnitIsUnit(unit, "player") then
+            add({ text = DCL("Leave the group"), func = function() LeaveParty() end })
+        else
+            local lead = C1.IsLeader()
+            add({ text = DCL("Inspect (gear, talents)"), disabled = not CanInspect(unit), func = function() InspectUnit(unit) end })
+            add({ text = DCL("Whisper"), func = function() ChatFrame_SendTell(name) end })
+            add({ text = DCL("Bot: follow me"), func = function() C1.Whisper(name, "follow") end })
+            add({ text = DCL("Bot: stay here"), func = function() C1.Whisper(name, "stay") end })
+            add({ text = DCL("Bot: summon to me"), func = function() C1.Whisper(name, "summon") end })
+            if C1.myChars[name] then
+                add({ text = DCL("Log this character out"), func = function() Chat(".playerbot bot remove " .. name) end })
+            end
+            add({ text = DCL("Remove from group"), disabled = not lead, func = function() UninviteUnit(name) end })
+            add({ text = DCL("Make leader"), disabled = not lead, func = function() PromoteToLeader(unit) end })
+            local ri = tonumber(unit:match("^raid(%d+)$") or "")
+            if ri and lead then
+                local _, _, cur = GetRaidRosterInfo(ri)
+                for g = 1, 8 do
+                    if g ~= cur then
+                        add({ text = string.format(DCL("Move to group %d"), g), func = function() SetRaidSubgroup(ri, g) end })
+                    end
+                end
+            end
+        end
+        menu[#menu + 1] = C1.FavItem(name)
+        add({ text = CANCEL, func = function() CloseDropDownMenus() end })
+        C1.Show(menu)
+    end
+    C1.InviteMenu = function(d)
+        local menu = { { text = ClassHex(CLASS_BY_ID[d.cls]) .. d.name .. "|r", isTitle = true, notCheckable = true } }
+        local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
+        if d.npc then
+            add({ text = DCL("NPCBots are managed with the NPCBot commands."), disabled = true })
+        else
+            add({ text = (d.mine and not d.online) and DCL("Log in and invite") or DCL("Invite"),
+                  disabled = InGroup(d.name), func = function() Invite(d) end })
+            if d.online then add({ text = DCL("Whisper"), func = function() ChatFrame_SendTell(d.name) end }) end
+        end
+        menu[#menu + 1] = C1.FavItem(d.name)
+        add({ text = CANCEL, func = function() CloseDropDownMenus() end })
+        C1.Show(menu)
+    end
+
+    -- party rows (both the five large rows and the raid's compact rows)
+    for _, list in ipairs({ prow, rrow }) do
+        for _, r in ipairs(list) do
+            r:EnableMouse(true)
+            local hl = r:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints(); hl:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight"); hl:SetBlendMode("ADD")
+            r:SetScript("OnMouseUp", function(self, button)
+                if button == "RightButton" and self.unit and UnitExists(self.unit) then C1.PartyMenu(self.unit) end
+            end)
+            r:SetScript("OnEnter", function(self)
+                if not (self.unit and UnitExists(self.unit)) then return end
+                GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:SetUnit(self.unit)
+                GameTooltip:AddLine(DCL("Right-click: more actions"), 0.7, 0.7, 0.7); GameTooltip:Show()
+            end)
+            r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
+    end
+
+    -- drag from the invite list onto "My party"
+    local ghost = CreateFrame("Frame", nil, UIParent)
+    ghost:SetFrameStrata("TOOLTIP"); ghost:SetSize(36, 36); ghost:Hide()
+    ghost.icon = ghost:CreateTexture(nil, "ARTWORK"); ghost.icon:SetAllPoints()
+    ghost.text = ghost:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(ghost.text, 13)
+    ghost.text:SetPoint("TOP", ghost, "BOTTOM", 0, -2)
+    C1.Border = function(on)
+        if on then col4:SetBackdropBorderColor(1, 0.82, 0, 1) else col4:SetBackdropBorderColor(0.20, 0.22, 0.28, 0.9) end
+    end
+    ghost:SetScript("OnUpdate", function(self)
+        local x, y = GetCursorPosition()
+        local sc = UIParent:GetEffectiveScale()
+        self:ClearAllPoints(); self:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x / sc, y / sc)
+        local over = MouseIsOver(col4) and true or false
+        if over ~= self.over then self.over = over; C1.Border(over) end
+    end)
+    for _, r in ipairs(rosterRows) do
+        r:RegisterForDrag("LeftButton")
+        r:SetScript("OnClick", function(self, button)
+            if button == "RightButton" and self.data then C1.InviteMenu(self.data) end
+        end)
+        r:SetScript("OnEnter", function(self)
+            local d = self.data
+            if not d then return end
+            GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:AddLine(d.name)
+            if not d.npc then GameTooltip:AddLine(DCL("Drag onto My party to invite"), 1, 1, 1) end
+            GameTooltip:AddLine(DCL("Right-click: more actions"), 0.7, 0.7, 0.7); GameTooltip:Show()
+        end)
+        r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        r:SetScript("OnDragStart", function(self)
+            local d = self.data
+            if not d or d.npc or InGroup(d.name) then return end
+            C1.drag = d
+            GameTooltip:Hide()
+            SetClassIcon(ghost.icon, CLASS_BY_ID[d.cls])
+            ghost.text:SetText(ClassHex(CLASS_BY_ID[d.cls]) .. d.name .. "|r")
+            ghost.over = nil
+            ghost:Show()
+        end)
+        r:SetScript("OnDragStop", function()
+            local d = C1.drag
+            C1.drag = nil
+            ghost:Hide(); C1.Border(false)
+            if d and MouseIsOver(col4) then Invite(d) end
+        end)
+    end
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
@@ -4671,6 +4807,7 @@ do
             rosterData = {}
         elseif kind == "RO" then
             local _, cat, name, cls, level, race, team, online, mine, extra = strsplit("\t", msg)
+            if mine == "1" and name then shell.c1.myChars[name] = true end  -- DCUI3C1
             if cat == rosterCat then
                 extra = extra or "-"
                 rosterData[#rosterData + 1] = { name = name, cls = tonumber(cls) or 0, level = tonumber(level) or 0,
