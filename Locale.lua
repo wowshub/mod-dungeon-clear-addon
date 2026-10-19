@@ -321,6 +321,11 @@ local zh = {
     -- DCUI3C1
     -- DCUI3C2
     -- DCUI3C3
+    -- DCUI3C4
+    ["This character"] = "本角色",
+    ["All characters"] = "全部角色",
+    ["Click to switch between this character's groups and the groups of every character on the account."] = "点击切换：只看本角色建的组 / 看本账号所有角色的组。",
+    ["Groups of your other characters: click 'This character' to switch to 'All characters'."] = "想用本账号其他角色建的组：点“本角色”切换到“全部角色”。",
     ["Fill up"] = "补满",
     ["Disband"] = "解散队伍",
     ["My bots log out"] = "我的机器人下线",

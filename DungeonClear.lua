@@ -4820,6 +4820,15 @@ do
     local function Find(g, name)
         for i, m in ipairs(g.members) do if m.name == name then return i end end
     end
+    -- RebornWOW DCUI3C4: a group belongs to the character that made it. "This character"
+    -- (default) shows only those; "All characters" shows the whole account's. Older
+    -- groups: the first member is the owner ("Save current party" stores the saver first).
+    local function Owner(g)
+        if not g.owner then g.owner = (g.members[1] and g.members[1].name) or UnitName("player") end
+        return g.owner
+    end
+    C2.showAll = false
+    function C2.Visible(g) return C2.showAll or Owner(g) == UnitName("player") end
 
     -- tabs
     local tabGroups = SmallButton(col4, "Groups (tab)", 60)
@@ -4844,10 +4853,26 @@ do
         b:SetScript("OnClick", function() C2.size = n; C2.offset = 0; C2.Render() end)
         sizeBtn[n] = b
     end
-    local btnSave = SmallButton(gp, "Save current party", 120)
+    local btnSave = SmallButton(gp, "Save current party", 112)
     btnSave:SetPoint("TOPLEFT", gp, "TOPLEFT", 0, -26)
     local btnNew = SmallButton(gp, "New group", 70)
     btnNew:SetPoint("LEFT", btnSave, "RIGHT", 4, 0)
+    -- DCUI3C4: this character's groups / the whole account's
+    local btnAll = SmallButton(gp, "This character", 60)
+    btnAll:SetPoint("LEFT", btnNew, "RIGHT", 4, 0)
+    btnAll:SetScript("OnClick", function(self)
+        C2.showAll = not C2.showAll
+        DCBind(self, C2.showAll and "All characters" or "This character")
+        C2.offset = 0
+        C2.Render()
+    end)
+    btnAll:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(DCL(C2.showAll and "All characters" or "This character"))
+        GameTooltip:AddLine(DCL("Click to switch between this character's groups and the groups of every character on the account."), 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    btnAll:SetScript("OnLeave", function() GameTooltip:Hide() end)
     local empty = gp:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); Crisp(empty, 13)
     empty:SetPoint("TOPLEFT", gp, "TOPLEFT", 4, -56); empty:SetPoint("RIGHT", gp, "RIGHT", -4, 0)
     empty:SetJustifyH("LEFT")
@@ -4872,7 +4897,7 @@ do
         for _, n in ipairs(SIZES) do if n == C2.size then sizeBtn[n]:LockHighlight() else sizeBtn[n]:UnlockHighlight() end end
         local disp = {}
         for _, g in ipairs(Groups()) do
-            if g.size == C2.size then
+            if g.size == C2.size and C2.Visible(g) then
                 disp[#disp + 1] = { kind = "group", g = g }
                 if C2.open == g then
                     for mi, m in ipairs(g.members) do disp[#disp + 1] = { kind = "member", g = g, m = m, mi = mi } end
@@ -4880,7 +4905,8 @@ do
                 end
             end
         end
-        empty:SetText(#disp == 0 and DCL("No favourite groups of this size yet. Form a party and click 'Save current party', or click 'New group' and drag characters from the right into it.") or "")
+        empty:SetText(#disp == 0 and (DCL("No favourite groups of this size yet. Form a party and click 'Save current party', or click 'New group' and drag characters from the right into it.")
+                                      .. (C2.showAll and "" or ("\n\n|cff999999" .. DCL("Groups of your other characters: click 'This character' to switch to 'All characters'.") .. "|r"))) or "")
         C2.offset = math.max(0, math.min(C2.offset, #disp - ROWS))
         for i, r in ipairs(rows) do
             local e = disp[i + C2.offset]
@@ -4892,7 +4918,9 @@ do
                     r.icon:SetPoint("LEFT", r, "LEFT", 4, 0)
                     r.icon:SetTexture(open and "Interface\\Buttons\\UI-MinusButton-Up" or "Interface\\Buttons\\UI-PlusButton-Up")
                     r.icon:SetTexCoord(0, 1, 0, 1)
-                    r.text:SetText("|cffffd100" .. e.g.name .. "|r")
+                    local owner = Owner(e.g)
+                    r.text:SetText("|cffffd100" .. e.g.name .. "|r"
+                                   .. (owner ~= UnitName("player") and ("  |cff999999(" .. owner .. ")|r") or ""))
                     r.info:SetPoint("RIGHT", r, "RIGHT", -52, 0)
                     r.info:SetText(string.format("%d/%d  %s", #e.g.members, e.g.size, Summary(e.g)))
                     r.bgt:SetTexture(0.08, 0.13, 0.22, 0.85)
@@ -4965,11 +4993,12 @@ do
     end
     -- items for the right-click menus of both lists: "add to favourite group ..."
     function C2.MenuItems(menu, name, cls, level)
-        local list = Groups()
-        if #list == 0 or not name then return end
+        if not name then return end
+        local list = {}
+        for _, g in ipairs(Groups()) do if C2.Visible(g) and #list < 12 then list[#list + 1] = g end end  -- DCUI3C4
+        if #list == 0 then return end
         menu[#menu + 1] = { text = DCL("Add to favourite group:"), isTitle = true, notCheckable = true }
-        for i, g in ipairs(list) do
-            if i > 12 then break end
+        for _, g in ipairs(list) do
             menu[#menu + 1] = { text = string.format("  %s  |cff999999%d/%d|r", g.name, #g.members, g.size), notCheckable = true,
                                 disabled = Find(g, name) ~= nil or #g.members >= g.size,
                                 func = function() C2.AddMember(g, name, cls, level) end }
@@ -5005,7 +5034,7 @@ do
         text = text and text:gsub("^%s+", ""):gsub("%s+$", "") or ""
         if not p or text == "" then return end
         if p.mode == "new" then
-            local g = { name = text, size = p.size, members = p.members or {} }
+            local g = { name = text, size = p.size, members = p.members or {}, owner = UnitName("player") }  -- owner: DCUI3C4
             table.insert(Groups(), g)
             C2.size, C2.open = g.size, g
         elseif p.mode == "rename" then
@@ -5109,7 +5138,7 @@ do
             C2.Render()
         end })
         add({ text = DCL("Copy"), func = function()
-            local copy = { name = string.format(DCL("%s (copy)"), g.name), size = g.size, members = {} }
+            local copy = { name = string.format(DCL("%s (copy)"), g.name), size = g.size, members = {}, owner = UnitName("player") }
             for _, m in ipairs(g.members) do copy.members[#copy.members + 1] = { name = m.name, cls = m.cls, level = m.level, role = m.role } end
             table.insert(Groups(), copy)
             C2.Render()
