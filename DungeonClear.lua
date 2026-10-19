@@ -4539,8 +4539,7 @@ do
                 SetClassIcon(r.icon, d.token)
                 r.name:SetText(ClassHex(d.token) .. d.name .. "|r")
                 local bits = d.party and { tostring(d.level) } or { "|cff3da6ffG" .. d.sub .. "|r", tostring(d.level) }
-                local role = RoleOf(d.unit)
-                if role then bits[#bits + 1] = "|cffffd100" .. DCL(role) .. "|r" end
+                -- DCUI3D9: the role is on the chip at the start of the row
                 if not d.online then bits[#bits + 1] = "|cff808080" .. DCL("offline") .. "|r"
                 elseif d.dead or UnitIsDeadOrGhost(d.unit) then bits[#bits + 1] = "|cffff3333" .. DCL("dead") .. "|r" end
                 r.info:SetText(table.concat(bits, " "))
@@ -6197,24 +6196,44 @@ do
     local fontD = CreateFont("DungeonClearBtnFontDisable"); fontD:SetFontObject(GameFontDisable); fontD:SetTextColor(0.50, 0.52, 0.56)
     local function Paint(b, kind)
         local c = COLORS[kind] or COLORS.base
-        b.dcFill:SetTexture(c[1], c[2], c[3], c[4])
-        b:SetBackdropBorderColor(c[5], c[6], c[7], 1)
+        local on = (not b.IsEnabled) or b:IsEnabled()
+        on = on == true or on == 1
+        b.dcFill:SetTexture(c[1], c[2], c[3], on and c[4] or 0.40)  -- DCUI3D9: disabled = dim
+        b:SetBackdropBorderColor(c[5], c[6], c[7], on and 1 or 0.35)
+    end
+    -- RebornWOW DCUI3D9: the template's red art -- the state textures, or three named slices
+    -- (Left / Middle / Right) that its mouse scripts re-texture; the highlight is kept apart
+    local function PanelTextures(b)
+        local list, seen = {}, {}
+        local hl = b.GetHighlightTexture and b:GetHighlightTexture()
+        local function check(t)
+            if not t or t == hl or seen[t] then return end
+            local p = t.GetTexture and t:GetTexture()
+            if type(p) == "string" and p:lower():find("ui%-panel%-button") then seen[t] = true; list[#list + 1] = t end
+        end
+        if b.GetNormalTexture then check(b:GetNormalTexture()) end
+        if b.GetPushedTexture then check(b:GetPushedTexture()) end
+        if b.GetDisabledTexture then check(b:GetDisabledTexture()) end
+        if b.GetRegions then
+            for _, r in ipairs({ b:GetRegions() }) do
+                if r.GetObjectType and r:GetObjectType() == "Texture" then check(r) end
+            end
+        end
+        return list
     end
     local function IsPanelButton(b)
-        if not (b.GetObjectType and b:GetObjectType() == "Button" and b.GetNormalTexture) then return false end
-        local n = b:GetNormalTexture()
-        local p = n and n:GetTexture()
-        return type(p) == "string" and p:lower():find("ui%-panel%-button") ~= nil
+        if not (b.GetObjectType and b:GetObjectType() == "Button") then return false end
+        return #PanelTextures(b) > 0
     end
+    shell.PanelTextures = PanelTextures
     local function Skin(b)
         if b.dcSkin or not IsPanelButton(b) then return end
         b.dcSkin = true
         b.dcKind = b.dcKindPref or "base"
-        local n, p, d, h = b:GetNormalTexture(), b:GetPushedTexture(), b:GetDisabledTexture(), b:GetHighlightTexture()
-        if n then n:SetTexture(nil) end
-        if p then p:SetTexture(0, 0, 0, 0.30); p:SetTexCoord(0, 1, 0, 1) end
-        if d then d:SetTexture(0, 0, 0, 0.45); d:SetTexCoord(0, 1, 0, 1) end
-        if h then h:SetTexture(1, 1, 1, 0.10); h:SetTexCoord(0, 1, 0, 1); h:SetAllPoints(b) end
+        -- DCUI3D9: fade every red piece (a re-textured slice keeps its alpha 0)
+        for _, t in ipairs(PanelTextures(b)) do t:SetAlpha(0) end
+        local h = b.GetHighlightTexture and b:GetHighlightTexture()
+        if h then h:SetTexture(1, 1, 1, 0.10); h:SetTexCoord(0, 1, 0, 1); h:SetAllPoints(b); h:SetAlpha(1) end
         b.dcFill = b:CreateTexture(nil, "BACKGROUND")
         b.dcFill:SetPoint("TOPLEFT", b, "TOPLEFT", 1, -1)
         b.dcFill:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
@@ -6225,6 +6244,12 @@ do
         local lock, unlock = b.LockHighlight, b.UnlockHighlight
         b.LockHighlight = function(self) lock(self); self.dcLocked = true; Paint(self, "sel") end
         b.UnlockHighlight = function(self) unlock(self); self.dcLocked = false; Paint(self, self.dcKind) end
+        -- DCUI3D9: enabled / disabled and pressed states on the flat fill
+        local en, dis = b.Enable, b.Disable
+        b.Enable = function(self) en(self); Paint(self, self.dcLocked and "sel" or self.dcKind) end
+        b.Disable = function(self) dis(self); Paint(self, self.dcLocked and "sel" or self.dcKind) end
+        b:HookScript("OnMouseDown", function(self) self.dcFill:SetVertexColor(0.70, 0.70, 0.70) end)
+        b:HookScript("OnMouseUp", function(self) self.dcFill:SetVertexColor(1, 1, 1) end)
         Paint(b, b.dcKind)
     end
     local function SkinTree(f, depth)
@@ -6496,6 +6521,87 @@ do
             end
             Set(r.fac, team)
         end
+    end
+    end)()
+
+    -- ------------------------------------------------------------ R3 details (RebornWOW DCUI3D9)
+    -- Closer to the approved mock-up: a coloured role chip at the start of each "My party"
+    -- row (Me / T / H / D), coloured plates under the dungeon list's status tags, and
+    -- /dcskin to report the flat-button skin on a client whose buttons stay red. Own
+    -- function (the main chunk's 200-local limit).
+    ;(function()
+    local CHIP = { me = { "Me (chip)", 0.55, 0.43, 0.16, "Me" }, Tank = { "Tank (short)", 0.22, 0.40, 0.75, "T" },
+                   Heal = { "Healer (short)", 0.15, 0.52, 0.26, "H" }, DPS = { "DPS (chip)", 0.62, 0.30, 0.15, "D" } }
+    for _, r in ipairs(rrow) do
+        r.chip = r:CreateTexture(nil, "ARTWORK"); r.chip:SetSize(20, 16); r.chip:SetPoint("LEFT", r, "LEFT", 3, 0)
+        r.chipText = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.chipText, 11)
+        r.chipText:SetPoint("CENTER", r.chip, "CENTER", 0, 0)
+        r.icon:ClearAllPoints(); r.icon:SetPoint("LEFT", r, "LEFT", 27, 0)
+    end
+    local origParty = RefreshParty
+    RefreshParty = function(...)
+        origParty(...)
+        for _, r in ipairs(rrow) do
+            local c
+            if r:IsShown() and r.unit and UnitExists(r.unit) then
+                c = UnitIsUnit(r.unit, "player") and CHIP.me or CHIP[RoleOf(r.unit) or ""]
+            end
+            if c then
+                r.chip:SetTexture(c[2], c[3], c[4], 0.85); r.chip:Show()
+                local t = DCL(c[1])
+                r.chipText:SetText(t ~= c[1] and t or c[5]); r.chipText:Show()  -- English: a plain letter
+            else
+                r.chip:Hide(); r.chipText:Hide()
+            end
+        end
+    end
+
+    -- status tags of the dungeon list on a coloured plate
+    for _, r in ipairs(dlRows) do
+        r.tagbg = r:CreateTexture(nil, "ARTWORK")
+        r.tagbg:SetHeight(16)
+        r.tagbg:SetPoint("RIGHT", r.tag, "RIGHT", 4, 0)
+        r.tagbg:Hide()
+    end
+    local origDL = DCShellRenderDungeons
+    DCShellRenderDungeons = function(...)
+        origDL(...)
+        for _, r in ipairs(dlRows) do
+            local d = r:IsShown() and r.data
+            if d and not d.header then
+                local res = LastTest(d.tokens)
+                local c = (not d.supported and { 0.35, 0.38, 0.42, 0.30 }) or (res == "success" and { 0.15, 0.45, 0.22, 0.50 })
+                          or (res and { 0.58, 0.15, 0.13, 0.50 }) or { 0.45, 0.35, 0.10, 0.45 }
+                r.tagbg:SetTexture(c[1], c[2], c[3], c[4])
+                r.tagbg:SetWidth((tonumber(r.tag:GetStringWidth()) or 30) + 8)
+                r.tagbg:Show()
+            else
+                r.tagbg:Hide()
+            end
+        end
+    end
+
+    -- /dcskin: what the flat-button skin found
+    SLASH_DCSKIN1 = "/dcskin"
+    SlashCmdList["DCSKIN"] = function()
+        local found, skinned = 0, 0
+        local function walk(f, depth)
+            if not f or depth > 8 then return end
+            if f.GetObjectType and f:GetObjectType() == "Button" then
+                if shell.PanelTextures and #shell.PanelTextures(f) > 0 then found = found + 1 end
+                if f.dcSkin then skinned = skinned + 1 end
+            end
+            for _, k in ipairs({ f:GetChildren() }) do walk(k, depth + 1) end
+        end
+        walk(frame, 0)
+        local paths = {}
+        local n = onBtn.GetNormalTexture and onBtn:GetNormalTexture()
+        paths[#paths + 1] = "normal=" .. tostring(n and n:GetTexture())
+        for _, rg in ipairs({ onBtn:GetRegions() }) do
+            if rg.GetObjectType and rg:GetObjectType() == "Texture" then paths[#paths + 1] = tostring(rg:GetTexture()) end
+        end
+        DEFAULT_CHAT_FRAME:AddMessage(string.format("|cff3da6ff[DC]|r skin: %d red buttons left to convert, %d converted; On button textures: %s",
+            found - skinned < 0 and 0 or found - skinned, skinned, table.concat(paths, " | ")))
     end
     end)()
 

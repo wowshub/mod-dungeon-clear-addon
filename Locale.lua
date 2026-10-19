@@ -332,6 +332,9 @@ local zh = {
     -- DCUI3D5
     -- DCUI3D6
     -- DCUI3D7
+    -- DCUI3D9
+    ["Me (chip)"] = "我",
+    ["DPS (chip)"] = "输",
     ["Into the %d-player group, the people of:"] = "导入到 %d 人组，从这个组：",
     ["You have no other favourite groups yet."] = "你还没有其他常用组。",
     ["%s: %d places left -- drag real players or bots in from the Invite list."] = "%s：还差 %d 人，可以从「邀请」列表拖真人或机器人进来。",
