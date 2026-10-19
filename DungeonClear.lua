@@ -1840,7 +1840,7 @@ end
           tip = "A party of your own characters, roles in order. They must be OFFLINE (log your bot alts out first): the server logs them in as bots and does not re-gear or re-level them. The character you are playing cannot join a test run - play it with the normal Start button and Auto-play instead." },
     }
     for i, m in ipairs(MODES) do
-        local b = Button(m.label, 80, function() DB().mode = m.key; ApplyMode() end, m.tip)  -- 96 -> 80: DCGM1C2
+        local b = Button(m.label, 64, function() DB().mode = m.key; ApplyMode() end, m.tip)  -- 96 -> 64: DCGM1C2/DCUI3D2
         if i == 1 then b:SetPoint("LEFT", modeLabel, "RIGHT", 6, 0)
         else b:SetPoint("LEFT", modeBtns[i - 1], "RIGHT", 2, 0) end
         b.key = m.key
@@ -1860,7 +1860,7 @@ end
         for i, t in ipairs(TIERS) do if t.key == cur then return i end end
         return 1
     end
-    tierBtn = Button("Normal", 56, function()
+    tierBtn = Button("Normal", 46, function()  -- 56 -> 46: DCUI3D2
         local i = TierIndex() % #TIERS + 1
         DB().cheat = TIERS[i].key
         DCBind(tierBtn, TIERS[i].label)
@@ -1874,7 +1874,7 @@ end
         for i, j in ipairs(JOIN) do if j.key == DB().joinMe then return i end end
         return 1
     end
-    tierBtn.join = Button("Me: out", 80, function()  -- 92 -> 80: DCGM1C2, the row fits the window
+    tierBtn.join = Button("Me: out", 60, function()  -- 92 -> 60: DCGM1C2/DCUI3D2, the row fits the window
         local i = tierBtn.JoinIndex() % #JOIN + 1
         DB().joinMe = JOIN[i].key
         DCBind(tierBtn.join, JOIN[i].label)
@@ -3957,14 +3957,15 @@ end
 local LIST_GAP, LIST_PAD, LIST_H, TOGGLE_H = 108, 4, 205, 24
 
 local function BelowActionRow()
+    local gap = DCShellTargetHeight and 100 or LIST_GAP  -- RebornWOW DCUI3D2: the panel's card layout
     local capH = listLabel:GetHeight()
     if not capH or capH < 1 then capH = 14 end  -- not laid out yet (load time)
     if DungeonClearDB.bossesFolded then
         -- Caption row only. The [+]/[-] button is taller than the caption and
         -- vertically centred on it, so IT sets the lower edge, not the text.
-        return LIST_GAP + math.max(capH, capH / 2 + TOGGLE_H / 2)
+        return gap + math.max(capH, capH / 2 + TOGGLE_H / 2)
     end
-    return LIST_GAP + capH + LIST_PAD + LIST_H
+    return gap + capH + LIST_PAD + LIST_H
 end
 
 -- RebornWOW DCUI3B5: in the five-column panel the boss list reaches the panel bottom
@@ -3998,7 +3999,10 @@ UpdateFrameHeight = function()
         --   +   the stack below it (BelowActionRow)
         --   12  bottom padding
         -- RebornWOW DCUI3D1: in the panel the status box starts at the top (no title row)
-        local function Natural() return (DCShellTargetHeight and 8 or 35) + statusFrame:GetHeight() + 8 + 24 + BelowActionRow() + 12 end
+        local function Natural()  -- DCUI3D2: card title above the status box, spectate footer below
+            return (DCShellTargetHeight and 24 or 35) + statusFrame:GetHeight() + 8 + 24 + BelowActionRow() + 12
+                   + (DCShellTargetHeight and 32 or 0)
+        end
         -- RebornWOW DCUI3B5: the five-column panel stretches the boss list to its bottom
         local want = (DCShellTargetHeight and not DungeonClearDB.bossesFolded) and DCShellTargetHeight or nil
         local listH = want and math.max(LIST_H_BASE, LIST_H + want - Natural()) or LIST_H_BASE
@@ -6049,6 +6053,121 @@ do
     tabRuns:SetScript("OnClick", function() DungeonClearDB.leftTab = "runs"; shell.ApplyLeftTab() end)
     end)()
 
+    -- ------------------------------------------------------------ cards + flat buttons (RebornWOW DCUI3D2)
+    -- Panel redesign R2 (user-approved mock-up + "softer, more professional buttons",
+    -- 2026-10-18).
+    --   * The centre window becomes three cards in the panel: Run (status + On / Off /
+    --     Skip / Pause), Strategy (pull + auto-play rows), Bosses (the list); spectate
+    --     moves to a footer row. DCShellLayout places the rows; the cards sit behind.
+    --   * Every UIPanelButtonTemplate button in the addon's windows loses the red art for
+    --     a flat dark button: slate fill, thin border, white text; On = soft green, Off =
+    --     soft red, GM = gold border; a "selected" button (LockHighlight: modes, tabs,
+    --     filters) is blue with a gold border. A light scan every 1.5 s skins buttons of
+    --     windows that build late.
+    -- Own function + tables on the shell (the main chunk's 200-local limit).
+    shell.cards = {}
+    ;(function()
+    local function Card(titleKey)
+        local c = CreateFrame("Frame", nil, frame)
+        c:SetFrameLevel(math.max(0, frame:GetFrameLevel()))
+        c:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Buttons\\WHITE8X8",
+                        tile = true, tileSize = 8, edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
+        c:SetBackdropColor(0.02, 0.03, 0.05, 0.72)
+        c:SetBackdropBorderColor(0.20, 0.24, 0.31, 1)
+        if titleKey then
+            c.title = c:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            c.title:SetPoint("TOPLEFT", c, "TOPLEFT", 8, -5)
+            c.title:SetTextColor(0.91, 0.77, 0.42)
+            DCBind(c.title, titleKey)
+        end
+        c:Hide()
+        return c
+    end
+    local run, strat, boss = Card("Run (card)"), Card("Strategy (card)"), Card(nil)
+    run:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, -4)
+    run:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, -4)
+    run:SetPoint("BOTTOM", onBtn, "BOTTOM", 0, -8)
+    strat:SetPoint("LEFT", frame, "LEFT", 6, 0)
+    strat:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
+    strat:SetPoint("TOP", onBtn, "BOTTOM", 0, -14)
+    strat:SetPoint("BOTTOM", onBtn, "BOTTOM", 0, -88)
+    boss:SetPoint("LEFT", frame, "LEFT", 6, 0)
+    boss:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
+    boss:SetPoint("TOP", onBtn, "BOTTOM", 0, -94)
+    boss:SetPoint("BOTTOM", frame, "BOTTOM", 0, 36)
+    shell.cards.list = { run, strat, boss }
+
+    -- flat buttons --------------------------------------------------------
+    local COLORS = {   -- fill r, g, b, a, border r, g, b
+        base = { 0.13, 0.16, 0.21, 0.95, 0.27, 0.31, 0.38 },
+        go   = { 0.14, 0.36, 0.21, 0.95, 0.30, 0.62, 0.38 },
+        stop = { 0.40, 0.13, 0.13, 0.95, 0.72, 0.28, 0.26 },
+        gm   = { 0.18, 0.15, 0.08, 0.95, 0.70, 0.56, 0.26 },
+        sel  = { 0.18, 0.31, 0.50, 0.98, 0.91, 0.77, 0.42 },
+    }
+    local fontN = CreateFont("DungeonClearBtnFontNormal"); fontN:SetFontObject(GameFontNormal); fontN:SetTextColor(0.92, 0.94, 0.97)
+    local fontH = CreateFont("DungeonClearBtnFontHighlight"); fontH:SetFontObject(GameFontHighlight); fontH:SetTextColor(1, 1, 1)
+    local fontD = CreateFont("DungeonClearBtnFontDisable"); fontD:SetFontObject(GameFontDisable); fontD:SetTextColor(0.50, 0.52, 0.56)
+    local function Paint(b, kind)
+        local c = COLORS[kind] or COLORS.base
+        b.dcFill:SetTexture(c[1], c[2], c[3], c[4])
+        b:SetBackdropBorderColor(c[5], c[6], c[7], 1)
+    end
+    local function IsPanelButton(b)
+        if not (b.GetObjectType and b:GetObjectType() == "Button" and b.GetNormalTexture) then return false end
+        local n = b:GetNormalTexture()
+        local p = n and n:GetTexture()
+        return type(p) == "string" and p:lower():find("ui%-panel%-button") ~= nil
+    end
+    local function Skin(b)
+        if b.dcSkin or not IsPanelButton(b) then return end
+        b.dcSkin = true
+        b.dcKind = b.dcKindPref or "base"
+        local n, p, d, h = b:GetNormalTexture(), b:GetPushedTexture(), b:GetDisabledTexture(), b:GetHighlightTexture()
+        if n then n:SetTexture(nil) end
+        if p then p:SetTexture(0, 0, 0, 0.30); p:SetTexCoord(0, 1, 0, 1) end
+        if d then d:SetTexture(0, 0, 0, 0.45); d:SetTexCoord(0, 1, 0, 1) end
+        if h then h:SetTexture(1, 1, 1, 0.10); h:SetTexCoord(0, 1, 0, 1); h:SetAllPoints(b) end
+        b.dcFill = b:CreateTexture(nil, "BACKGROUND")
+        b.dcFill:SetPoint("TOPLEFT", b, "TOPLEFT", 1, -1)
+        b.dcFill:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -1, 1)
+        b:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        b:SetNormalFontObject(fontN)
+        b:SetHighlightFontObject(fontH)
+        b:SetDisabledFontObject(fontD)
+        local lock, unlock = b.LockHighlight, b.UnlockHighlight
+        b.LockHighlight = function(self) lock(self); self.dcLocked = true; Paint(self, "sel") end
+        b.UnlockHighlight = function(self) unlock(self); self.dcLocked = false; Paint(self, self.dcKind) end
+        Paint(b, b.dcKind)
+    end
+    local function SkinTree(f, depth)
+        if not f or depth > 8 then return end
+        Skin(f)
+        local kids = { f:GetChildren() }
+        for _, k in ipairs(kids) do SkinTree(k, depth + 1) end
+    end
+    shell.SkinButton = Skin
+    shell.SkinTree = function(f) SkinTree(f, 0) end
+    onBtn.dcKindPref = "go"
+    offBtn.dcKindPref = "stop"
+    if selfBotUI.btns[#selfBotUI.btns] then selfBotUI.btns[#selfBotUI.btns].dcKindPref = "gm" end
+
+    local WINDOWS = { "DungeonClearFrame", "DungeonClearTestFrame", "DungeonClearTestListFrame", "DungeonClearQueueFrame",
+                      "DungeonClearGpsFrame", "DungeonClearChatCopyFrame", "DungeonClearCorpseRunFrame", "DungeonClearPickerFrame",
+                      "DungeonClearRunStatsFrame", "DungeonClearSelfBotAsk", "DungeonClearBotInspectFrame" }
+    local scan = CreateFrame("Frame", nil, UIParent)
+    local acc = 2
+    scan:SetScript("OnUpdate", function(_, elapsed)
+        acc = acc + (elapsed or 0)
+        if acc < 1.5 then return end
+        acc = 0
+        for _, name in ipairs(WINDOWS) do
+            local w = _G[name]
+            if type(w) == "table" and w.IsShown and w:IsShown() then SkinTree(w, 0) end
+        end
+    end)
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
@@ -6225,6 +6344,14 @@ do
         if DungeonClearDB.tinyMode then
             DCShellTargetHeight = nil
             closeBtn:ClearAllPoints(); closeBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
+            -- RebornWOW DCUI3D2: the window's own row layout back
+            for _, c in ipairs(shell.cards.list or {}) do c:Hide() end
+            pullLabel:ClearAllPoints(); pullLabel:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 2, -14)
+            selfBotUI.label:ClearAllPoints(); selfBotUI.label:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 2, -78)
+            listLabel:ClearAllPoints(); listLabel:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 0, -108)
+            listLabel:SetTextColor(0.24, 0.60, 1.0)
+            spectateBtn:ClearAllPoints(); spectateBtn:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 0, -40)
+            spectateResetBtn:ClearAllPoints(); spectateResetBtn:SetPoint("TOPRIGHT", pauseBtn, "BOTTOMRIGHT", 0, -40)
             shell:Hide()
             frame:SetScale(1)
             frame:SetBackdropColor(0.03, 0.03, 0.05, 0.90)
@@ -6238,7 +6365,20 @@ do
         -- right end of the top bar; the window's own title row is the top bar's now
         closeBtn:ClearAllPoints(); closeBtn:SetPoint("RIGHT", shell.topbar, "RIGHT", -2, 0)
         header:Hide()
-        statusFrame:ClearAllPoints(); statusFrame:SetPoint("TOP", frame, "TOP", 0, -8)
+        -- RebornWOW DCUI3D2: three cards -- Run (status + On/Off/Skip/Pause), Strategy (pull,
+        -- auto-play), Bosses (the list); spectate on a footer row at the bottom
+        statusFrame:ClearAllPoints(); statusFrame:SetPoint("TOP", frame, "TOP", 0, -24)
+        if statusFrame.SetBackdropColor then
+            statusFrame:SetBackdropColor(0, 0, 0, 0); statusFrame:SetBackdropBorderColor(0, 0, 0, 0)
+        end
+        pullLabel:ClearAllPoints(); pullLabel:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 4, -36)
+        selfBotUI.label:ClearAllPoints(); selfBotUI.label:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 4, -64)
+        listLabel:ClearAllPoints(); listLabel:SetPoint("TOPLEFT", onBtn, "BOTTOMLEFT", 2, -100)
+        listLabel:SetTextColor(0.91, 0.77, 0.42)
+        spectateBtn:ClearAllPoints(); spectateBtn:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 12, 8)
+        spectateResetBtn:ClearAllPoints(); spectateResetBtn:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -12, 8)
+        for _, c in ipairs(shell.cards.list or {}) do c:Show() end
+        if shell.SkinTree then shell.SkinTree(frame) end
         if DCShellTargetHeight ~= SHELL_H - PAD * 2 - 40 then   -- DCUI3B5: boss list to the bottom
             DCShellTargetHeight = SHELL_H - PAD * 2 - 40
             UpdateFrameHeight()
