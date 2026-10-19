@@ -5012,7 +5012,7 @@ do
                 end
             end
         end
-        empty:SetText(#disp == 0 and (DCL("No favourite groups of this size yet. Form a party and click 'Save current party', or click 'New group' and drag characters from the right into it.")
+        empty:SetText(#disp == 0 and (DCL("No favourite groups of this size yet. Form a party and click 'Save current party', or drag characters from the Invite list in (a new group is made for you).")
                                       .. (C2.showAll and "" or ("\n\n|cff999999" .. DCL("Groups of your other characters: click 'This character' to switch to 'All characters'.") .. "|r"))) or "")
         local gvis = math.min(ROWS, shell.groupVis or ROWS)  -- DCUI3D1
         C2.offset = math.max(0, math.min(C2.offset, #disp - gvis))
@@ -5082,6 +5082,21 @@ do
         if #g.members >= g.size then Say(string.format(DCL("This group is full (%d)."), g.size)); return end
         table.insert(g.members, { name = name, cls = cls, level = level, role = role })
         C2.Render()
+    end
+    -- RebornWOW DCUI3D5: several at once -- skips names already in the group, stops at its size
+    function C2.AddMany(g, list)
+        local added, dup, full = 0, 0, 0
+        for _, m in ipairs(list) do
+            if Find(g, m.name) then dup = dup + 1
+            elseif #g.members >= g.size then full = full + 1
+            else
+                table.insert(g.members, { name = m.name, cls = m.cls, level = m.level, role = m.role })
+                added = added + 1
+            end
+        end
+        Say(string.format(DCL("%s: %d added, %d already in it, %d over its size."), g.name, added, dup, full))
+        C2.Render()
+        return added
     end
     function C2.Drop(d)
         -- RebornWOW DCUI3D3: no shown open group -> a new group of the size on screen
@@ -5261,6 +5276,26 @@ do
             table.insert(Groups(), copy)
             C2.Render()
         end })
+        -- RebornWOW DCUI3D5: move this group's people into another group / a group of another size
+        local others = {}
+        for _, x in ipairs(Groups()) do if x ~= g and C2.Visible(x) and #others < 10 then others[#others + 1] = x end end
+        if #others > 0 then
+            menu[#menu + 1] = { text = DCL("Add everyone to:"), isTitle = true, notCheckable = true }
+            for _, x in ipairs(others) do
+                add({ text = string.format("  %s  |cff999999%d/%d|r", x.name, #x.members, x.size), func = function() C2.AddMany(x, g.members) end })
+            end
+        end
+        menu[#menu + 1] = { text = DCL("Copy as a group of:"), isTitle = true, notCheckable = true }
+        for _, n in ipairs(SIZES) do
+            if n ~= g.size then
+                add({ text = "  " .. string.format(DCL("%d players"), n), func = function()
+                    local ng = { name = string.format(DCL("%s (%d)"), g.name, n), size = n, members = {}, owner = UnitName("player") }
+                    table.insert(Groups(), ng)
+                    C2.size, C2.open = n, ng
+                    C2.AddMany(ng, g.members)
+                end })
+            end
+        end
         add({ text = "|cffff5050" .. DCL("Delete") .. "|r", func = function()
             C2.pendingDel = g
             StaticPopup_Show("DUNGEONCLEAR_GROUP_DELETE", string.format(DCL("Delete the favourite group %s?"), g.name))
@@ -6178,6 +6213,209 @@ do
             if type(w) == "table" and w.IsShown and w:IsShown() then SkinTree(w, 0) end
         end
     end)
+    end)()
+
+    -- ------------------------------------------------------------ multi-select in the invite list (RebornWOW DCUI3D5)
+    -- The user asked for Windows-style multi-select (2026-10-18): a check box per row,
+    -- click = only this one, Ctrl+click = add / remove one, Shift+click = a range. With
+    -- several picked, dragging any picked row carries all of them (onto the groups page:
+    -- into the open group, or a new one; onto the party: invited one after another), a
+    -- bar under the list offers Invite / Add to group / Clear, and right-click on a picked
+    -- row works on all of them. Own function + a table on the shell (200-local limit).
+    shell.sel = { names = {}, order = {} }
+    ;(function()
+    local S, C1, C2 = shell.sel, shell.c1, shell.c2
+    local function Say(m) DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC]|r " .. m) end
+    local function Count() local n = 0; for _ in pairs(S.names) do n = n + 1 end; return n end
+    local function Selected()
+        local list = {}
+        for _, name in ipairs(S.order) do if S.names[name] then list[#list + 1] = S.names[name] end end
+        return list
+    end
+    local function Add(d) if not S.names[d.name] then S.order[#S.order + 1] = d.name end; S.names[d.name] = d end
+    local function Clear() wipe(S.names); wipe(S.order) end
+    local function Members(list)
+        local out = {}
+        for _, d in ipairs(list) do out[#out + 1] = { name = d.name, cls = CLASS_BY_ID[d.cls], level = d.level } end
+        return out
+    end
+
+    -- the bar under the list (right of background / - / +)
+    local bar = CreateFrame("Frame", nil, col5)
+    bar:SetPoint("BOTTOMRIGHT", col5, "BOTTOMRIGHT", -8, 8)
+    bar:SetSize(206, 22)
+    bar:Hide()
+    local count = bar:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(count, 12)
+    count:SetPoint("LEFT", bar, "LEFT", 0, 0)
+    count:SetTextColor(0.91, 0.77, 0.42)
+    local bClear = SmallButton(bar, "Clear the selection", 40); bClear:SetPoint("RIGHT", bar, "RIGHT", 0, 0)
+    DCBind(bClear, "Clear (short)")
+    local bGroup = SmallButton(bar, "Add to group", 60); bGroup:SetPoint("RIGHT", bClear, "LEFT", -3, 0)
+    local bInvite = SmallButton(bar, "Invite", 46); bInvite:SetPoint("RIGHT", bGroup, "LEFT", -3, 0)
+
+    local function Paint()
+        if S.cat ~= rosterCat then Clear(); S.cat = rosterCat end
+        for _, r in ipairs(rosterRows) do
+            local d = r.data
+            local on = d and S.names[d.name] ~= nil
+            if r.chk then
+                if d and not d.npc then r.chk:Show(); r.chk:SetChecked(on and true or false) else r.chk:Hide() end
+            end
+            if r.selbg then if on then r.selbg:Show() else r.selbg:Hide() end end
+        end
+        local n = Count()
+        if n > 0 then count:SetText(string.format(DCL("%d selected"), n)); bar:Show() else bar:Hide() end
+    end
+    S.Paint = Paint
+
+    -- invite several, one every 0.6 s (a full party turns into a raid first)
+    local q, queue, qacc = CreateFrame("Frame"), {}, 0
+    q:Hide()
+    q:SetScript("OnUpdate", function(self, elapsed)
+        qacc = qacc + (elapsed or 0)
+        if qacc < 0.6 then return end
+        qacc = 0
+        local d = queue[1]
+        if not d then self:Hide(); return end
+        if GetNumRaidMembers() == 0 and GetNumPartyMembers() >= 4 and IsPartyLeader() then ConvertToRaid(); return end
+        table.remove(queue, 1)
+        if d.mine and not d.online then Chat(".playerbot bot add " .. d.name) else InviteUnit(d.name) end
+    end)
+    local function InviteAll(list)
+        local n = 0
+        for _, d in ipairs(list) do if not d.npc and not InGroup(d.name) then queue[#queue + 1] = d; n = n + 1 end end
+        if n == 0 then return end
+        Say(string.format(DCL("Inviting %d characters..."), n))
+        qacc = 0
+        q:Show()
+    end
+    local function AddToGroup(g, list)
+        if C2.AddMany then C2.AddMany(g, Members(list)) end
+    end
+    local function AddToOpenGroup(list)
+        if #list == 0 then return end
+        local open = C2.open
+        if not (open and open.size == C2.size and C2.Visible(open)) then
+            C2.Drop(list[1])          -- opens or creates a group of the size on screen, adds the first
+            table.remove(list, 1)
+        end
+        if #list > 0 and C2.open then AddToGroup(C2.open, list) end
+    end
+    local function NewGroup(size, list)
+        local all = DungeonClearDB.dcGroups or {}
+        DungeonClearDB.dcGroups = all
+        local g = { name = string.format(DCL("Favourite group %d"), #all + 1), size = size, members = {}, owner = UnitName("player") }
+        table.insert(all, g)
+        if not C2.active then C2.SetActive(true) end
+        C2.size, C2.open = size, g
+        AddToGroup(g, list)
+    end
+
+    local function Menu()
+        local list = Selected()
+        local menu = { { text = string.format(DCL("%d characters selected"), #list), isTitle = true, notCheckable = true } }
+        local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
+        add({ text = string.format(DCL("Invite the %d selected"), #list), func = function() InviteAll(Selected()) end })
+        local groups = {}
+        for _, g in ipairs(DungeonClearDB.dcGroups or {}) do
+            if C2.Visible(g) and #groups < 10 then groups[#groups + 1] = g end
+        end
+        if #groups > 0 then
+            menu[#menu + 1] = { text = DCL("Add to favourite group:"), isTitle = true, notCheckable = true }
+            for _, g in ipairs(groups) do
+                add({ text = string.format("  %s  |cff999999%d/%d|r", g.name, #g.members, g.size), func = function() AddToGroup(g, Selected()) end })
+            end
+        end
+        menu[#menu + 1] = { text = DCL("New favourite group:"), isTitle = true, notCheckable = true }
+        for _, n in ipairs({ 5, 10, 20, 25, 40 }) do
+            add({ text = "  " .. string.format(DCL("%d players"), n), func = function() NewGroup(n, Selected()) end })
+        end
+        add({ text = DCL("Clear the selection"), func = function() Clear(); Paint() end })
+        add({ text = CANCEL, func = function() CloseDropDownMenus() end })
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
+    end
+    bInvite:SetScript("OnClick", function() InviteAll(Selected()) end)
+    bGroup:SetScript("OnClick", Menu)
+    bClear:SetScript("OnClick", function() Clear(); Paint() end)
+
+    for i, r in ipairs(rosterRows) do
+        r.icon:ClearAllPoints(); r.icon:SetPoint("LEFT", r, "LEFT", 21, 0)
+        r.chk = CreateFrame("CheckButton", nil, r, "UICheckButtonTemplate")
+        r.chk:SetSize(20, 20); r.chk:SetPoint("LEFT", r, "LEFT", 0, 0)
+        r.chk:SetScript("OnClick", function(self)
+            local d = r.data
+            if d and not d.npc then
+                if S.names[d.name] then S.names[d.name] = nil else Add(d) end
+                S.anchor = i
+            end
+            Paint()
+        end)
+        r.selbg = r:CreateTexture(nil, "BORDER"); r.selbg:SetAllPoints(); r.selbg:SetTexture(0.20, 0.40, 0.70, 0.35); r.selbg:Hide()
+        local origClick = r:GetScript("OnClick")
+        r:SetScript("OnClick", function(self, button)
+            local d = self.data
+            if not d then return end
+            if button == "RightButton" then
+                if S.names[d.name] and Count() > 1 then Menu() elseif origClick then origClick(self, button) end
+                return
+            end
+            if d.npc then return end
+            if IsControlKeyDown() then
+                if S.names[d.name] then S.names[d.name] = nil else Add(d) end
+                S.anchor = i
+            elseif IsShiftKeyDown() and S.anchor then
+                -- like Windows: Shift+click = exactly the rows from the last clicked one to this one
+                Clear()
+                local a, b = math.min(S.anchor, i), math.max(S.anchor, i)
+                for k = a, b do
+                    local x = rosterRows[k] and rosterRows[k]:IsShown() and rosterRows[k].data
+                    if x and not x.npc then Add(x) end
+                end
+            else
+                local only = S.names[d.name] and Count() == 1
+                Clear()
+                if not only then Add(d) end
+                S.anchor = i
+            end
+            Paint()
+        end)
+        local origStart, origStop = r:GetScript("OnDragStart"), r:GetScript("OnDragStop")
+        r:SetScript("OnDragStart", function(self)
+            local d = self.data
+            if d and S.names[d.name] and Count() > 1 then
+                S.dragging = true
+                GameTooltip:Hide()
+                C1.ghost.icon:SetTexture("Interface\\Icons\\INV_Misc_GroupLooking"); C1.ghost.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+                C1.ghost.text:SetText(string.format(DCL("%d characters"), Count()))
+                C1.ghost.over = nil
+                C1.ghost:Show()
+            elseif origStart then
+                origStart(self)
+            end
+        end)
+        r:SetScript("OnDragStop", function(self)
+            if S.dragging then
+                S.dragging = nil
+                C1.ghost:Hide(); C1.Border(false)
+                if MouseIsOver(col4) then
+                    if C2.active then AddToOpenGroup(Selected()) else InviteAll(Selected()) end
+                end
+            elseif origStop then
+                origStop(self)
+            end
+        end)
+        r:HookScript("OnEnter", function(self)
+            if self.data and not self.data.npc then
+                GameTooltip:AddLine(DCL("Ctrl+click: pick several; Shift+click: a range"), 0.7, 0.7, 0.7)
+                GameTooltip:Show()
+            end
+        end)
+    end
+    local orig = DCShellRenderRoster
+    DCShellRenderRoster = function(...)
+        orig(...)
+        Paint()
+    end
     end)()
 
     -- ------------------------------------------------------------ server replies

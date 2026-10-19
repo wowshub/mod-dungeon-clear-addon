@@ -329,6 +329,22 @@ local zh = {
     -- DCUI3D1
     -- DCUI3D2
     -- DCUI3D3
+    -- DCUI3D5
+    ["No favourite groups of this size yet. Form a party and click 'Save current party', or drag characters from the Invite list in (a new group is made for you)."] = "这个人数还没有常用组。组好队后点“保存当前队伍”，或直接把「邀请」列表里的角色拖进来（会自动新建一个组）。",
+    ["Clear (short)"] = "清除",
+    ["Clear the selection"] = "清除选择",
+    ["Add to group"] = "加入组",
+    ["%d selected"] = "已选 %d",
+    ["%d characters"] = "%d 人",
+    ["%d characters selected"] = "已选 %d 人",
+    ["Invite the %d selected"] = "邀请已选的 %d 人",
+    ["New favourite group:"] = "新建常用组：",
+    ["Ctrl+click: pick several; Shift+click: a range"] = "Ctrl+点击：多选；Shift+点击：连续选",
+    ["Inviting %d characters..."] = "正在邀请 %d 人……",
+    ["Add everyone to:"] = "全部加入到：",
+    ["Copy as a group of:"] = "复制成：",
+    ["%s (%d)"] = "%s（%d人）",
+    ["%s: %d added, %d already in it, %d over its size."] = "%s：加入 %d 人，已在组里 %d 人，超出人数 %d 人。",
     ["New %d-player favourite group %s: drag more characters in; right-click its name to rename it."] = "已新建 %d 人常用组 %s：继续把角色拖进来；右键组名可以改名。",
     ["Run (card)"] = "运行",
     ["Strategy (card)"] = "策略",
@@ -405,7 +421,6 @@ local zh = {
     ["Save current party"] = "保存当前队伍",
     ["New group"] = "新建",
     ["Form"] = "组队",
-    ["No favourite groups of this size yet. Form a party and click 'Save current party', or click 'New group' and drag characters from the right into it."] = "这个人数还没有常用组。组好队后点“保存当前队伍”，或直接把下面邀请列表里的角色拖进来（会自动新建一个组）。",
     ["Drag a character here to add it (%d more)"] = "把角色拖到这里加入（还差 %d 人）",
     ["Tank (short)"] = "坦",
     ["Healer (short)"] = "治",
