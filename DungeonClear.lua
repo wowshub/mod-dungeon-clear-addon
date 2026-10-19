@@ -6681,10 +6681,17 @@ do
         r.range:SetPoint("RIGHT", r.info, "LEFT", -4, 0)
     end
     local function Fill(bg, fg, cur, max, c)
-        local w = tonumber((bg:GetWidth())) or 0
-        -- DCUI3E3: the laid-out rect when the width reads 0
+        -- DCUI3E4: GetWidth() on a two-anchor texture is not the laid-out width on this
+        -- client; use the bar's edges, else the row (minus chip + icon + margins)
+        local w = 0
         local l, rt = bg:GetLeft(), bg:GetRight()
-        if (w <= 1) and l and rt and rt > l then w = rt - l end
+        if l and rt and rt - l > 10 then w = rt - l end
+        if w <= 10 then
+            local row = bg:GetParent()
+            local rl, rr = row and row:GetLeft(), row and row:GetRight()
+            if rl and rr and rr - rl > 64 then w = rr - rl - 54 end
+        end
+        if w <= 10 then w = tonumber((bg:GetWidth())) or 0 end
         if not max or max <= 0 or w <= 0 then bg:Hide(); fg:Hide(); return end
         local f = math.max(0, math.min(1, (cur or 0) / max))
         bg:Show()
