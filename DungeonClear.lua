@@ -4088,6 +4088,15 @@ do
         local cc = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
         return cc and string.format("|cff%02x%02x%02x", cc.r * 255, cc.g * 255, cc.b * 255) or "|cffffffff"
     end
+    -- RebornWOW DCUI3B4: list text must read over the painted background -- a set size
+    -- and a hard black shadow on every list string.
+    local function Crisp(fs, size)
+        local face = fs:GetFont()
+        if face and size then fs:SetFont(face, size) end
+        fs:SetShadowColor(0, 0, 0, 1)
+        fs:SetShadowOffset(1, -1)
+        return fs
+    end
     local function ClassName(token)
         if not token then return "" end
         if CUSTOM_NAME[token] then return DCL(CUSTOM_NAME[token]) end
@@ -4135,7 +4144,7 @@ do
         local b = BGS[BgIndex()]
         if b[2] then art:SetTexture(b[2]); art:Show(); glow:Hide() else art:Hide(); glow:Show() end
         -- over a picture the columns are lighter glass so the painting reads through
-        for _, c in ipairs(columns) do c:SetBackdropColor(0.02, 0.03, 0.05, b[2] and 0.42 or 0.55) end
+        for _, c in ipairs(columns) do c:SetBackdropColor(0.02, 0.03, 0.05, b[2] and 0.50 or 0.60) end
     end
 
     local function Column(width, titleKey)
@@ -4167,7 +4176,7 @@ do
         r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
         r.bgt = r:CreateTexture(nil, "BACKGROUND")
         r.bgt:SetAllPoints()
-        r.bgt:SetTexture(0.06, 0.08, 0.12, 0.55)
+        r.bgt:SetTexture(0.03, 0.04, 0.06, 0.72)
         return r
     end
 
@@ -4180,7 +4189,7 @@ do
     local dlRows, dlData, dlOffset = {}, {}, 0
     local DL_ROW_H, DL_ROWS = 22, 26
     local dlFilterBtns = {}
-    for i, f in ipairs({ { "all", "All" }, { "supported", "Supported" }, { "unsupported", "Not yet" } }) do
+    for i, f in ipairs({ { "all", "All" }, { "supported", "Supported" }, { "unsupported", "Unsupported" } }) do
         local b = SmallButton(col1, f[2], 72)
         b:SetPoint("TOPLEFT", col1, "TOPLEFT", 10 + (i - 1) * 76, -36)
         b:SetScript("OnClick", function() dlFilter = f[1]; dlOffset = 0; if DCShellRenderDungeons then DCShellRenderDungeons() end end)
@@ -4193,14 +4202,17 @@ do
         r:SetPoint("TOPLEFT", col1, "TOPLEFT", 8, -62 - (i - 1) * DL_ROW_H)
         r:SetPoint("RIGHT", col1, "RIGHT", -8, 0)
         r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        Crisp(r.text, 14)
         r.text:SetPoint("LEFT", r, "LEFT", 4, 0)
         r.text:SetPoint("RIGHT", r, "RIGHT", -60, 0)
         r.text:SetJustifyH("LEFT")
         r.tag = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        Crisp(r.tag, 13)
         r.tag:SetPoint("RIGHT", r, "RIGHT", -4, 0)
         dlRows[i] = r
     end
     local dlEmpty = col1:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    Crisp(dlEmpty, 13)
     dlEmpty:SetPoint("TOPLEFT", col1, "TOPLEFT", 12, -66)
     dlEmpty:SetPoint("RIGHT", col1, "RIGHT", -12, 0)
     dlEmpty:SetJustifyH("LEFT")
@@ -4267,19 +4279,19 @@ do
                 r:Hide()
             elseif d.header then
                 r.text:SetText("|cff3da6ff" .. d.text .. "|r"); r.tag:SetText("")
-                r.bgt:SetTexture(0.10, 0.14, 0.22, 0.70)
+                r.bgt:SetTexture(0.08, 0.13, 0.22, 0.85)
                 r:Show()
             else
-                local lv = d.level > 0 and (" |cff999999" .. d.level .. "|r") or ""
-                r.text:SetText((d.supported and "|cffffffff" or "|cff8a8a8a") .. d.name .. "|r" .. lv)
+                local lv = d.level > 0 and (" |cffc8c8c8" .. d.level .. "|r") or ""
+                r.text:SetText((d.supported and "|cffffffff" or "|cffb0b0b0") .. d.name .. "|r" .. lv)
                 local res = LastTest(d.tokens)
                 local tag
-                if not d.supported then tag = "|cff707070" .. DCL("Not yet") .. "|r"
+                if not d.supported then tag = "|cffa0a0a0" .. DCL("Unsupported") .. "|r"
                 elseif res == "success" then tag = "|cff40ff40" .. DCL("Passed") .. "|r"
                 elseif res then tag = "|cffff5050" .. DCL("Failed") .. "|r"
                 else tag = "|cffffd100" .. DCL("Supported") .. "|r" end
                 r.tag:SetText(tag)
-                r.bgt:SetTexture(0.06, 0.08, 0.12, 0.40)
+                r.bgt:SetTexture(0.03, 0.04, 0.06, 0.72)
                 r:Show()
             end
         end
@@ -4325,11 +4337,12 @@ do
     -- ============================================================ 2: dungeon runs
     local col2 = Column(W2, "Dungeon runs")
     local runsNote = col2:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    Crisp(runsNote, 13)
     runsNote:SetPoint("TOPLEFT", col2.title, "BOTTOMLEFT", 0, -14)
     runsNote:SetPoint("RIGHT", col2, "RIGHT", -12, 0)
     runsNote:SetJustifyH("LEFT")
     DCBind(runsNote, "Every dungeon you clear with your party will be listed here (result, bosses, deaths, time, cheat tier), with right-click to run it again, see its stats or delete it. Coming in the next update.")
-    runsNote:SetTextColor(0.65, 0.68, 0.75)
+    runsNote:SetTextColor(0.82, 0.85, 0.90)
 
     -- ============================================================ 4: my party
     local col4 = Column(W4, "My party")
@@ -4347,11 +4360,11 @@ do
                         tile = true, tileSize = 12, edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
         r:SetBackdropBorderColor(0.25, 0.28, 0.35, 0.8)
         r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(34, 34); r.icon:SetPoint("LEFT", r, "LEFT", 6, 0)
-        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(r.name, 14)
         r.name:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 8, -2); r.name:SetJustifyH("LEFT")
-        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.info, 12)
         r.info:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 8, 2); r.info:SetJustifyH("LEFT")
-        r.role = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); r.role:SetPoint("RIGHT", r, "RIGHT", -10, 0)
+        r.role = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); Crisp(r.role, 13); r.role:SetPoint("RIGHT", r, "RIGHT", -10, 0)
         prow[i] = r
     end
     local function RoleOf(unit)
@@ -4427,9 +4440,9 @@ do
         r:SetPoint("TOPLEFT", col5, "TOPLEFT", 8, -110 - (i - 1) * RS_ROW_H)
         r:SetPoint("RIGHT", col5, "RIGHT", -8, 0)
         r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(26, 26); r.icon:SetPoint("LEFT", r, "LEFT", 3, 0)
-        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); Crisp(r.name, 13)
         r.name:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 6, -1); r.name:SetJustifyH("LEFT")
-        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.info, 12)
         r.info:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 6, 1); r.info:SetJustifyH("LEFT")
         r.star = CreateFrame("Button", nil, r)
         r.star:SetSize(16, 16); r.star:SetPoint("RIGHT", r, "RIGHT", -62, 0)
@@ -4439,6 +4452,7 @@ do
         rosterRows[i] = r
     end
     local rosterNote = col5:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    Crisp(rosterNote, 13)
     rosterNote:SetPoint("TOPLEFT", col5, "TOPLEFT", 12, -114)
     rosterNote:SetPoint("RIGHT", col5, "RIGHT", -12, 0)
     rosterNote:SetJustifyH("LEFT")

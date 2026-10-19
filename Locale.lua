@@ -318,6 +318,7 @@ local zh = {
     ["Empty slot"] = "空位",
     ["raid"] = "团队",
     -- DCUI3B
+    ["Unsupported"] = "未支持",  -- DCUI3B4
     ["offline"] = "离线",  -- DCUI3B2
     ["All dungeons"] = "全部副本",
     ["All"] = "全部",
