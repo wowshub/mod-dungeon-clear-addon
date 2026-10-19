@@ -4139,7 +4139,9 @@ do
     local bg = shell:CreateTexture(nil, "BACKGROUND")
     bg:SetPoint("TOPLEFT", 4, -4); bg:SetPoint("BOTTOMRIGHT", -4, 4)
     bg:SetTexture(0.05, 0.07, 0.10, 0.97)
-    local glow = shell:CreateTexture(nil, "BORDER")
+    -- RebornWOW DCUI3B6: one layer each (fill / painting / glow) -- this client does not
+    -- honour CreateTexture's sub-level, so two textures on one layer draw in any order.
+    local glow = shell:CreateTexture(nil, "ARTWORK")
     glow:SetPoint("TOPLEFT", shell, "TOPLEFT", CENTRE_X - 40, -4)
     glow:SetPoint("BOTTOMLEFT", shell, "BOTTOMLEFT", CENTRE_X - 40, 4)
     glow:SetWidth(WC + 80)
@@ -4154,7 +4156,7 @@ do
                   { "B", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_B_v1", "B: warm dwarven vault" },
                   { "C", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_C_v1", "C: frost mist ruins" },
                   { "none", nil, "No picture" } }
-    local art = shell:CreateTexture(nil, "BACKGROUND", nil, 1)
+    local art = shell:CreateTexture(nil, "BORDER")
     art:SetPoint("TOPLEFT", 4, -4); art:SetPoint("BOTTOMRIGHT", -4, 4)
     art:SetTexCoord(0, 1, 0, 984 / 1024)
     local columns = {}
@@ -4690,7 +4692,18 @@ do
             DCShellRenderRoster()
         end
     end)
-    ev:SetScript("OnUpdate", function()
+    -- RebornWOW DCUI3B6: a request sent during the loading screen is lost; while the
+    -- panel is open, ask again every 3 s until the answer has arrived.
+    local retryAcc = 0
+    ev:SetScript("OnUpdate", function(_, elapsed)
+        retryAcc = retryAcc + (elapsed or 0)
+        if retryAcc >= 3 then
+            retryAcc = 0
+            if shell:IsVisible() then
+                if #dlData == 0 then SendDcCommand("dungeons", "", true) end
+                if rosterData.loading then RequestRoster() end
+            end
+        end
         if partyDirty then partyDirty = false; RefreshParty() end
         if rosterDirty then rosterDirty = false; if col5:IsVisible() then DCShellRenderRoster() end end
     end)
