@@ -604,6 +604,7 @@ do
                     casual = { "Casual", "|cff00ff00" }, speed = { "Speed", "|cffff6600" } }
     local current = nil
     local function Paint()
+        DCCurrentTier = current  -- RebornWOW DCUI3D1: the panel's top bar shows it too
         local t = TIERS[current or ""]
         if t then tag:SetText(t[2] .. "[" .. DCL(t[1]) .. "]|r") else tag:SetText("") end
     end
@@ -3996,7 +3997,8 @@ UpdateFrameHeight = function()
         --   8   gap, then the 24px action row
         --   +   the stack below it (BelowActionRow)
         --   12  bottom padding
-        local function Natural() return 35 + statusFrame:GetHeight() + 8 + 24 + BelowActionRow() + 12 end
+        -- RebornWOW DCUI3D1: in the panel the status box starts at the top (no title row)
+        local function Natural() return (DCShellTargetHeight and 8 or 35) + statusFrame:GetHeight() + 8 + 24 + BelowActionRow() + 12 end
         -- RebornWOW DCUI3B5: the five-column panel stretches the boss list to its bottom
         local want = (DCShellTargetHeight and not DungeonClearDB.bossesFolded) and DCShellTargetHeight or nil
         local listH = want and math.max(LIST_H_BASE, LIST_H + want - Natural()) or LIST_H_BASE
@@ -4111,11 +4113,13 @@ end)
 -- Tiny mode drops back to the old single bar. A do-block keeps its locals out of the
 -- main chunk's 200-local budget.
 do
-    local W1, W2, WC, W4, W5 = 250, 270, 330, 270, 280
+    -- RebornWOW DCUI3D1: three columns -- left (dungeons / runs share it), centre, right
+    -- (party over invite); a 40 px top bar above them
+    local W1, W2, WC, W4, W5 = 300, 300, 330, 340, 340
     local GAP, PAD = 8, 10
-    local SHELL_W = W1 + W2 + WC + W4 + W5 + GAP * 4 + PAD * 2    -- 1452
-    local SHELL_H = math.floor(SHELL_W / 2.08 + 0.5)                -- the background's 1612:774
-    local CENTRE_X = PAD + W1 + GAP + W2 + GAP                      -- the window's left edge in the shell
+    local SHELL_W = W1 + WC + W4 + GAP * 2 + PAD * 2                -- 1006 (DCUI3D1)
+    local SHELL_H = 700                                             -- DCUI3D1: top bar + columns
+    local CENTRE_X = PAD + W1 + GAP                                 -- the window's left edge in the shell
     local SCALE_MIN, SCALE_MAX, SCALE_STEP, SCALE_DEFAULT = 0.6, 1.6, 0.1, 1.0
     -- Default: as large as fits 95% of the screen width (1452 wide does not fit 1080p at
     -- 1.0); once +/- is used, the player's own value.
@@ -4204,7 +4208,10 @@ do
                   { "none", nil, "No picture" } }
     local art = shell:CreateTexture(nil, "BORDER")
     art:SetPoint("TOPLEFT", 4, -4); art:SetPoint("BOTTOMRIGHT", -4, 4)
-    art:SetTexCoord(0, 1, 0, 984 / 1024)
+    do  -- DCUI3D1: crop the sides so the 2.08:1 painting is not squeezed into the panel
+        local f = math.min(1, (SHELL_W / SHELL_H) / (2048 / 984))
+        art:SetTexCoord((1 - f) / 2, (1 + f) / 2, 0, 984 / 1024)
+    end
     local columns = {}
     local bgChoice = "B"
     local function BgIndex()
@@ -4494,6 +4501,15 @@ do
     local function RefreshRaid(n)
         for _, r in ipairs(prow) do r:Hide() end
         local list = {}
+        if n == 0 then  -- RebornWOW DCUI3D1: a party uses the same compact rows
+            for i, u in ipairs({ "player", "party1", "party2", "party3", "party4" }) do
+                if UnitExists(u) then
+                    local _, token = UnitClass(u)
+                    list[#list + 1] = { unit = u, i = i, name = UnitName(u) or "?", sub = 1, level = UnitLevel(u) or 0,
+                                        token = token, online = UnitIsConnected(u), dead = UnitIsDeadOrGhost(u), party = true }
+                end
+            end
+        end
         for i = 1, n do
             local name, _, sub, level, _, token, _, online, dead = GetRaidRosterInfo(i)
             if name then
@@ -4509,14 +4525,16 @@ do
             if a.sub ~= b.sub then return a.sub < b.sub end
             return a.i < b.i
         end)
-        raidOffset = math.max(0, math.min(raidOffset, #list - RAID_ROWS))
+        local vis = math.min(RAID_ROWS, shell.partyVis or RAID_ROWS)  -- DCUI3D1: rows that fit
+        raidOffset = math.max(0, math.min(raidOffset, #list - vis))
         for i, r in ipairs(rrow) do
             local d = list[i + raidOffset]
+            if i > vis then d = nil end  -- DCUI3D1
             r.unit = d and d.unit  -- DCUI3C1
             if not d then r:Hide() else
                 SetClassIcon(r.icon, d.token)
                 r.name:SetText(ClassHex(d.token) .. d.name .. "|r")
-                local bits = { "|cff3da6ffG" .. d.sub .. "|r", tostring(d.level) }
+                local bits = d.party and { tostring(d.level) } or { "|cff3da6ffG" .. d.sub .. "|r", tostring(d.level) }
                 local role = RoleOf(d.unit)
                 if role then bits[#bits + 1] = "|cffffd100" .. DCL(role) .. "|r" end
                 if not d.online then bits[#bits + 1] = "|cff808080" .. DCL("offline") .. "|r"
@@ -4526,8 +4544,8 @@ do
                 r:Show()
             end
         end
-        local more = #list > RAID_ROWS and ("  |cff999999" .. (raidOffset + 1) .. "-" .. math.min(#list, raidOffset + RAID_ROWS) .. "|r") or ""
-        count:SetText(string.format("%s %d", DCL("raid"), #list) .. more)
+        local more = #list > vis and ("  |cff999999" .. (raidOffset + 1) .. "-" .. math.min(#list, raidOffset + vis) .. "|r") or ""
+        count:SetText((n > 0 and string.format("%s %d", DCL("raid"), #list) or string.format("%d/5", #list)) .. more)
     end
     local function RefreshParty()
         if not col4:IsVisible() then return end
@@ -4546,7 +4564,8 @@ do
                 SendDcCommand("partyroles", "", true)
             end
         end
-        if n > 0 then RefreshRaid(n) return end
+        RefreshRaid(n)  -- RebornWOW DCUI3D1: party and raid share the compact rows
+        do return end
         for _, r in ipairs(rrow) do r:Hide() end
         raidOffset = 0
         local units = { "player" }
@@ -4570,7 +4589,7 @@ do
         count:SetText(string.format("%d/5", present))
     end
     col4:SetScript("OnMouseWheel", function(_, delta)
-        if (GetNumRaidMembers() or 0) > 0 then raidOffset = raidOffset - delta * 3; RefreshParty() end
+        raidOffset = raidOffset - delta * 3; RefreshParty()  -- DCUI3D1: party too (rows that fit)
     end)
 
     -- ============================================================ 5: roster to invite from
@@ -4666,10 +4685,12 @@ do
             elseif isPlayers and playerFilter == "guild" then keep = d.guild end
             if keep then list[#list + 1] = d end
         end
-        rosterOffset = math.max(0, math.min(rosterOffset, #list - RS_ROWS))
+        local rvis = math.min(RS_ROWS, shell.rosterVis or RS_ROWS)  -- DCUI3D1
+        rosterOffset = math.max(0, math.min(rosterOffset, #list - rvis))
         rosterNote:SetText(rosterData.loading and DCL("Loading...") or (#list == 0 and DCL("Nobody here.") or ""))
         for i, r in ipairs(rosterRows) do
             local d = list[i + rosterOffset]
+            if i > rvis then d = nil end  -- DCUI3D1
             r.data = d
             if not d then r:Hide() else
                 local token = CLASS_BY_ID[d.cls]
@@ -4986,9 +5007,11 @@ do
         end
         empty:SetText(#disp == 0 and (DCL("No favourite groups of this size yet. Form a party and click 'Save current party', or click 'New group' and drag characters from the right into it.")
                                       .. (C2.showAll and "" or ("\n\n|cff999999" .. DCL("Groups of your other characters: click 'This character' to switch to 'All characters'.") .. "|r"))) or "")
-        C2.offset = math.max(0, math.min(C2.offset, #disp - ROWS))
+        local gvis = math.min(ROWS, shell.groupVis or ROWS)  -- DCUI3D1
+        C2.offset = math.max(0, math.min(C2.offset, #disp - gvis))
         for i, r in ipairs(rows) do
             local e = disp[i + C2.offset]
+            if i > gvis then e = nil end  -- DCUI3D1
             r.e = e
             if not e then r:Hide() else
                 r.icon:ClearAllPoints(); r.info:ClearAllPoints()
@@ -5919,6 +5942,113 @@ do
     end)
     end)()
 
+    -- ------------------------------------------------------------ top bar + left tabs (RebornWOW DCUI3D1)
+    -- Panel redesign R1 (user-approved mock-up, 2026-10-18): a top bar over three columns.
+    -- The bar shows the dungeon, the run state and time, boss progress and the cheat tier;
+    -- the tools (GPS / Test / EN / Tiny / close) sit at its right end (DCShellLayout). The
+    -- left column holds "All dungeons" and "Dungeon runs" in one place behind two tabs.
+    -- Own function + tables on the shell (the main chunk's 200-local limit).
+    shell.topbar = CreateFrame("Frame", nil, shell)
+    ;(function()
+    local tb = shell.topbar
+    tb:SetPoint("TOPLEFT", shell, "TOPLEFT", PAD, -6)
+    tb:SetPoint("TOPRIGHT", shell, "TOPRIGHT", -PAD, -6)
+    tb:SetHeight(36)
+    tb:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                     tile = true, tileSize = 12, edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    tb:SetBackdropColor(0.03, 0.04, 0.06, 0.85)
+    tb:SetBackdropBorderColor(0.42, 0.36, 0.22, 0.9)
+    local function Text(size)
+        local f = tb:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        Crisp(f, size or 13)
+        f:SetTextColor(0.91, 0.93, 0.95)
+        return f
+    end
+    local function Sep(anchor)
+        local s = tb:CreateTexture(nil, "ARTWORK")
+        s:SetSize(1, 18); s:SetTexture(0.25, 0.28, 0.35, 1)
+        s:SetPoint("LEFT", anchor, "RIGHT", 10, 0)
+        return s
+    end
+    local title = tb:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("LEFT", tb, "LEFT", 12, 0)
+    title:SetTextColor(0.24, 0.60, 1.0)
+    DCBind(title, "Dungeon Clear")
+    local dungeon = Text(13); dungeon:SetPoint("LEFT", Sep(title), "RIGHT", 10, 0)
+    local dot = tb:CreateTexture(nil, "ARTWORK"); dot:SetSize(8, 8); dot:SetPoint("LEFT", dungeon, "RIGHT", 16, 0)
+    local state = Text(13); state:SetPoint("LEFT", dot, "RIGHT", 5, 0)
+    local timer = Text(13); timer:SetPoint("LEFT", state, "RIGHT", 12, 0)
+    local bossTxt = Text(13); bossTxt:SetPoint("LEFT", timer, "RIGHT", 12, 0)
+    local barBg = tb:CreateTexture(nil, "ARTWORK"); barBg:SetSize(80, 6); barBg:SetTexture(0.11, 0.14, 0.19, 1)
+    barBg:SetPoint("LEFT", bossTxt, "RIGHT", 6, 0)
+    local barFill = tb:CreateTexture(nil, "OVERLAY"); barFill:SetHeight(6); barFill:SetTexture(0.91, 0.77, 0.42, 1)
+    barFill:SetPoint("LEFT", barBg, "LEFT", 0, 0)
+    local tier = Text(13); tier:SetPoint("LEFT", barBg, "RIGHT", 12, 0)
+    local TIERS = { normal = { "Normal", "|cffcccccc" }, story = { "Story", "|cff3da6ff" },
+                    casual = { "Casual", "|cff00ff00" }, speed = { "Speed", "|cffff6600" } }
+    local runSince, acc = nil, 1
+    local function Paint()
+        local name, itype, diff = GetInstanceInfo()
+        if itype == "party" or itype == "raid" then
+            local hero = (itype == "party" and diff == 2) or (itype == "raid" and (diff == 3 or diff == 4))
+            dungeon:SetText("|cffe8c46a" .. DCLDungeon(name or "?") .. "|r  " .. DCL(hero and "Heroic" or "Normal dungeon"))
+        else
+            dungeon:SetText("|cff9aa4b2" .. (GetRealZoneText() or "") .. "|r")
+        end
+        if isDCOn then
+            dot:SetTexture(0.25, 0.75, 0.35, 1)
+            state:SetText(DCL("Running"))
+            runSince = runSince or GetTime()
+        else
+            dot:SetTexture(0.42, 0.46, 0.52, 1)
+            state:SetText("|cff9aa4b2" .. DCL("Not running") .. "|r")
+            runSince = nil
+        end
+        if runSince then
+            local s = math.floor(GetTime() - runSince)
+            timer:SetText(DCL("Time") .. " " .. string.format("%d:%02d", math.floor(s / 60), s % 60))
+        else
+            timer:SetText("")
+        end
+        local total, dead = #bosses, 0
+        for _, b in ipairs(bosses) do if b.status == "dead" then dead = dead + 1 end end
+        if total > 0 then
+            bossTxt:SetText(DCL("Bosses") .. " " .. dead .. "/" .. total)
+            barBg:Show(); barFill:Show(); barFill:SetWidth(math.max(1, 80 * dead / total))
+        else
+            bossTxt:SetText(""); barBg:Hide(); barFill:Hide()
+        end
+        local t = TIERS[DCCurrentTier or ""]
+        tier:SetText(t and (t[2] .. "[" .. DCL(t[1]) .. "]|r") or "")
+    end
+    tb:SetScript("OnUpdate", function(_, elapsed)
+        acc = acc + (elapsed or 0)
+        if acc < 0.5 then return end
+        acc = 0
+        Paint()
+    end)
+    DCLoc.OnChange(Paint)
+
+    -- left column: two tabs over one place (col1 and col2 share the same rectangle)
+    local tabAll = SmallButton(shell, "All dungeons", 100)
+    local tabRuns = SmallButton(shell, "Dungeon runs", 100)
+    tabAll:SetPoint("TOPLEFT", shell, "TOPLEFT", PAD + 8, -(PAD + 40) - 8)
+    tabRuns:SetPoint("LEFT", tabAll, "RIGHT", 4, 0)
+    tabAll:SetFrameLevel(col1:GetFrameLevel() + 10)
+    tabRuns:SetFrameLevel(col1:GetFrameLevel() + 10)
+    col1.title:Hide()
+    col2.title:Hide()
+    function shell.ApplyLeftTab()
+        if DungeonClearDB.leftTab == "runs" then
+            col1:Hide(); col2:Show(); tabRuns:LockHighlight(); tabAll:UnlockHighlight()
+        else
+            col2:Hide(); col1:Show(); tabAll:LockHighlight(); tabRuns:UnlockHighlight()
+        end
+    end
+    tabAll:SetScript("OnClick", function() DungeonClearDB.leftTab = "all"; shell.ApplyLeftTab() end)
+    tabRuns:SetScript("OnClick", function() DungeonClearDB.leftTab = "runs"; shell.ApplyLeftTab() end)
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
@@ -6033,7 +6163,7 @@ do
         if l and t then
             local k = eff / frame:GetEffectiveScale()
             frame:ClearAllPoints()
-            frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l * k + CENTRE_X, t * k - PAD)
+            frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l * k + CENTRE_X, t * k - PAD - 40)  -- DCUI3D1: top bar
         end
     end
     local function SavePosition()
@@ -6104,30 +6234,38 @@ do
         end
         frame:SetScale(Scale())
         frame:SetBackdropColor(0, 0, 0, 0)      -- the window is the centre column now
-        -- DCUI3B7: GPS / Test / EN / Tiny / close hang off closeBtn -> the panel's top-right
-        closeBtn:ClearAllPoints(); closeBtn:SetPoint("TOPRIGHT", col5, "TOPRIGHT", -4, -4)
-        if DCShellTargetHeight ~= SHELL_H - PAD * 2 then   -- DCUI3B5: boss list to the bottom
-            DCShellTargetHeight = SHELL_H - PAD * 2
+        -- RebornWOW DCUI3D1: the tools (GPS / Test / EN / Tiny / close hang off closeBtn) at the
+        -- right end of the top bar; the window's own title row is the top bar's now
+        closeBtn:ClearAllPoints(); closeBtn:SetPoint("RIGHT", shell.topbar, "RIGHT", -2, 0)
+        header:Hide()
+        statusFrame:ClearAllPoints(); statusFrame:SetPoint("TOP", frame, "TOP", 0, -8)
+        if DCShellTargetHeight ~= SHELL_H - PAD * 2 - 40 then   -- DCUI3B5: boss list to the bottom
+            DCShellTargetHeight = SHELL_H - PAD * 2 - 40
             UpdateFrameHeight()
         end
         frame:SetBackdropBorderColor(0, 0, 0, 0)
-        local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2)
+        local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2 + 40)
         shell:ClearAllPoints()
-        shell:SetPoint("TOPLEFT", frame, "TOPLEFT", -CENTRE_X, PAD)
+        shell:SetPoint("TOPLEFT", frame, "TOPLEFT", -CENTRE_X, PAD + 40)
         shell:SetSize(SHELL_W, h)
-        local x = PAD
-        for _, c in ipairs({ { col1, W1 }, { col2, W2 }, false, { col4, W4 }, { col5, W5 } }) do
-            if c then
-                c[1]:ClearAllPoints()
-                c[1]:SetPoint("TOPLEFT", shell, "TOPLEFT", x, -PAD)
-                c[1]:SetPoint("BOTTOMLEFT", shell, "BOTTOMLEFT", x, PAD)
-                x = x + c[2] + GAP
-            else
-                x = x + WC + GAP
-            end
+        -- left: dungeons and runs share one place (tabs); right: party (260 high) over invite
+        local top, rx = -(PAD + 40), PAD + W1 + GAP + WC + GAP
+        for _, c in ipairs({ col1, col2 }) do
+            c:ClearAllPoints(); c:SetWidth(W1)
+            c:SetPoint("TOPLEFT", shell, "TOPLEFT", PAD, top)
+            c:SetPoint("BOTTOMLEFT", shell, "BOTTOMLEFT", PAD, PAD)
         end
+        col4:ClearAllPoints(); col4:SetWidth(W4); col4:SetHeight(260)
+        col4:SetPoint("TOPLEFT", shell, "TOPLEFT", rx, top)
+        col5:ClearAllPoints(); col5:SetWidth(W5)
+        col5:SetPoint("TOPLEFT", col4, "BOTTOMLEFT", 0, -GAP)
+        col5:SetPoint("BOTTOMLEFT", shell, "BOTTOMLEFT", rx, PAD)
+        shell.partyVis = math.floor((260 - 40 - 34) / 26)
+        shell.groupVis = math.floor((260 - 36 - 52 - 6) / 25)
+        shell.rosterVis = math.max(1, math.floor((h - PAD * 2 - 40 - 260 - GAP - 110 - 34) / 34))
+        if shell.ApplyLeftTab then shell.ApplyLeftTab() end
         -- keep the WHOLE panel on screen, not just the centre window
-        frame:SetClampRectInsets(-CENTRE_X, SHELL_W - CENTRE_X - WC, PAD, -(h - frame:GetHeight() - PAD))
+        frame:SetClampRectInsets(-CENTRE_X, SHELL_W - CENTRE_X - WC, PAD + 40, -(h - frame:GetHeight() - PAD - 40))
         shell:Show()
         partyDirty = true
         if not loaded then
@@ -6138,7 +6276,7 @@ do
     end
     frame:HookScript("OnSizeChanged", function()
         if not DungeonClearDB.tinyMode and shell:IsShown() then
-            local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2)
+            local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2 + 40)  -- DCUI3D1: top bar
             if math.abs(shell:GetHeight() - h) > 0.5 then shell:SetHeight(h) end
         end
     end)

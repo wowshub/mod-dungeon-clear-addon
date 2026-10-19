@@ -326,6 +326,9 @@ local zh = {
     -- DCTEST8A
     -- DCGM1C
     -- DCSB2A
+    -- DCUI3D1
+    ["Normal dungeon"] = "普通",
+    ["Running"] = "运行中",
     ["Let the AI play for you?"] = "要让 AI 帮你打吗？",
     ["Your party is running dungeon clear (tank: %s). Pick a role and the AI plays your character with the bots, or stay manual. You can switch any time on the dungeon-clear panel's Auto-play row; leaving the dungeon or the party hands the character back to you."] = "你的队伍正在清本（坦克：%s）。选一个职责，AI 就和机器人一起操作你的角色；也可以选手动自己打。之后随时可以在清本面板的“托管”行切换；离开副本或队伍时自动交还给你。",
     ["You left the dungeon or the party: auto-play is off, you play your character again."] = "你离开了副本或队伍：托管已关闭，角色交还给你。",
