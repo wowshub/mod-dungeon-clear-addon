@@ -324,6 +324,11 @@ local zh = {
     -- DCUI3C4
     -- DCRUN1A
     -- DCTEST8A
+    -- DCGM1C
+    ["Me: out"] = "我不进队",
+    ["Me: in"] = "我进队",
+    ["Me: in + god"] = "我进队+无敌",
+    ["Random bots only: join the test party yourself (one bot fewer). 'in + god' also makes you invincible; the bots keep the party's cheat tier. When the run ends you leave the party and go back to where you started."] = "只用于“随机机器人”：你自己加入测试队伍（少一个机器人）。“我进队+无敌”同时让你无敌；机器人仍按队伍的作弊档。测试结束时你会离开队伍，传回开测前的位置。",
     ["Bot pool"] = "机器人池",
     ["Pick a character"] = "选择角色",
     ["online"] = "在线",

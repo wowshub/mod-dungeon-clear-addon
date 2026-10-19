@@ -1866,6 +1866,20 @@ end
     end, "Cheat tier for the whole party (click to cycle). Normal: no cheats, real difficulty. Story: invincible + unlimited mana, normal damage, events play out. Casual: the same, bots deal half damage. Speed: also no cooldowns, instant casts, 10x damage - route checks only, a boss may die before its script finishes. A run with a tier is marked and kept out of rankings.")
     tierBtn:SetPoint("LEFT", modeBtns[#modeBtns], "RIGHT", 4, 0)
     DCBind(tierBtn, TIERS[TierIndex()].label)
+    -- RebornWOW DCGM1C: mode 2 -- you join the random bot party (one bot fewer), optionally
+    -- invincible. Kept on tierBtn (the main chunk's 200-local limit).
+    local JOIN = { { key = nil, label = "Me: out" }, { key = "me", label = "Me: in" }, { key = "god", label = "Me: in + god" } }
+    tierBtn.JoinIndex = function()
+        for i, j in ipairs(JOIN) do if j.key == DB().joinMe then return i end end
+        return 1
+    end
+    tierBtn.join = Button("Me: out", 92, function()
+        local i = tierBtn.JoinIndex() % #JOIN + 1
+        DB().joinMe = JOIN[i].key
+        DCBind(tierBtn.join, JOIN[i].label)
+    end, "Random bots only: join the test party yourself (one bot fewer). 'in + god' also makes you invincible; the bots keep the party's cheat tier. When the run ends you leave the party and go back to where you started.")
+    tierBtn.join:SetPoint("LEFT", tierBtn, "RIGHT", 4, 0)
+    DCBind(tierBtn.join, JOIN[tierBtn.JoinIndex()].label)
 
     -- random-comp options
     y = y - 30
@@ -2001,9 +2015,10 @@ end
         end
         if heroicCheck:GetChecked() then cmd = cmd .. " heroic" end
         if t.cheat and t.cheat ~= "" then cmd = cmd .. " cheat=" .. t.cheat end  -- DCGM1B
+        if t.joinMe and t.mode ~= "roster" then cmd = cmd .. (t.joinMe == "god" and " withmegod" or " withme") end  -- DCGM1C
         t.ilvl, t.seed = ilvlBox:GetText(), seedBox:GetText()
         Send(cmd)
-        if t.autoWatch then watchAt = GetTime() + 10 end
+        if t.autoWatch and not (t.joinMe and t.mode ~= "roster") then watchAt = GetTime() + 10 end  -- DCGM1C: no watch when you are in it
     end, "Start a bot test run with the options above. The bots run the dungeon on their own; use Watch to follow them.")
     startBtn:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, y)
     local gearBtn = Button("Gear tiers", 90, function()
