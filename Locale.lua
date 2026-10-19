@@ -309,6 +309,14 @@ local zh = {
     ["Follow this bot (camera)"] = "跟随观看这个机器人",
     ["Show its gear"] = "查看它的装备",
     ["Teleport next to it (.appear)"] = "传送到它身边（.appear）",
+    -- DCUI3A
+    ["Dungeon runs"] = "副本记录",
+    ["Every dungeon you clear with your party will be listed here (result, bosses, deaths, time, cheat tier), with right-click to run it again, see its stats or delete it. Coming in the next update."] =
+        "你带队清过的每一个副本都会列在这里（结果、首领、死亡、用时、作弊档），右键可以再刷一次、看统计、删除。下一个更新加入。",
+    ["My party"] = "我的队伍",
+    ["Panel size"] = "面板大小",
+    ["Empty slot"] = "空位",
+    ["raid"] = "团队",
     -- DCGM1D
     ["My party (GM)"] = "我的队伍（GM）",
     ["Kill all bots"] = "杀死全部机器人",

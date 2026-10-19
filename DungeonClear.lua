@@ -4016,6 +4016,7 @@ UpdateLayout = function()
     end
     if UpdatePullControls then UpdatePullControls() end
     UpdateFrameHeight()
+    if DCShellLayout then DCShellLayout() end  -- RebornWOW DCUI3A: the three-column shell
 end
 
 tinyBtn:SetScript("OnClick", function()
@@ -4027,6 +4028,254 @@ toggleBossesBtn:SetScript("OnClick", function()
     DungeonClearDB.bossesFolded = not DungeonClearDB.bossesFolded
     UpdateLayout()
 end)
+
+-- RebornWOW DCUI3A: the three-column panel (design doc §15). The existing window is the
+-- CENTRE column and keeps every control and every rule it has (dynamic height, the
+-- top-left pin, tiny mode). A shell is hung around it: a left column (dungeon runs,
+-- DCRUN1A), a right column (my party, DCPB1A) and one background behind all three.
+-- The shell is a child of the window, so dragging, closing and hiding follow for free;
+-- the whole thing scales together (DungeonClearDB.panelScale, 0.8-1.6, default 1.25).
+-- Tiny mode drops back to the old single bar. A do-block keeps its locals out of the
+-- main chunk's 200-local budget.
+do
+    local COL_W, GAP, PAD = 310, 10, 10
+    local SHELL_W = COL_W + GAP + 330 + GAP + COL_W + PAD * 2   -- 990
+    local SHELL_H = math.floor(SHELL_W / 2.08 + 0.5)              -- the background's 1612:774
+    local SCALE_MIN, SCALE_MAX, SCALE_STEP, SCALE_DEFAULT = 0.8, 1.6, 0.1, 1.25
+
+    local shell = CreateFrame("Frame", "DungeonClearShell", frame)
+    shell:SetFrameLevel(math.max(0, frame:GetFrameLevel() - 1))
+    shell:EnableMouse(true)  -- clicks on the shell drag the window like its own body
+    shell:RegisterForDrag("LeftButton")
+    shell:SetScript("OnDragStart", function() if frame:GetScript("OnDragStart") then frame:GetScript("OnDragStart")(frame) end end)
+    shell:SetScript("OnDragStop", function() if frame:GetScript("OnDragStop") then frame:GetScript("OnDragStop")(frame) end end)
+    shell:SetBackdrop({
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = false, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    shell:SetBackdropBorderColor(0.42, 0.36, 0.22, 1.0)
+
+    -- Background. Until the painted one arrives (Codex, DCUI3B) a dark cold gradient
+    -- with a lighter band in the middle, the way the painting is meant to read.
+    local bg = shell:CreateTexture(nil, "BACKGROUND")
+    bg:SetPoint("TOPLEFT", 4, -4)
+    bg:SetPoint("BOTTOMRIGHT", -4, 4)
+    bg:SetTexture(0.05, 0.07, 0.10, 0.97)
+    local glow = shell:CreateTexture(nil, "BORDER")
+    glow:SetPoint("TOP", shell, "TOP", 0, -4)
+    glow:SetPoint("BOTTOM", shell, "BOTTOM", 0, 4)
+    glow:SetWidth(360)
+    glow:SetTexture(0.20, 0.30, 0.40, 1)
+    glow:SetGradientAlpha("VERTICAL", 0.20, 0.30, 0.40, 0.00, 0.20, 0.30, 0.40, 0.18)
+    shell.bg = bg
+
+    local function Column(side)
+        local c = CreateFrame("Frame", nil, shell)
+        c:SetWidth(COL_W)
+        c:SetBackdrop({
+            bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 12, edgeSize = 12,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        })
+        c:SetBackdropColor(0.02, 0.03, 0.05, 0.55)
+        c:SetBackdropBorderColor(0.20, 0.22, 0.28, 0.9)
+        c.title = c:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        c.title:SetPoint("TOPLEFT", c, "TOPLEFT", 12, -10)
+        c.title:SetTextColor(0.24, 0.60, 1.0)
+        return c
+    end
+
+    -- Left: dungeon runs (DCRUN1A fills it).
+    local left = Column("left")
+    DCBind(left.title, "Dungeon runs")
+    local leftNote = left:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    leftNote:SetPoint("TOPLEFT", left.title, "BOTTOMLEFT", 0, -14)
+    leftNote:SetPoint("RIGHT", left, "RIGHT", -12, 0)
+    leftNote:SetJustifyH("LEFT")
+    leftNote:SetJustifyV("TOP")
+    DCBind(leftNote, "Every dungeon you clear with your party will be listed here (result, bosses, deaths, time, cheat tier), with right-click to run it again, see its stats or delete it. Coming in the next update.")
+    leftNote:SetTextColor(0.65, 0.68, 0.75)
+    shell.left = left
+
+    -- Right: my party (live now; DCPB1A adds the picker on empty slots).
+    local right = Column("right")
+    DCBind(right.title, "My party")
+    local count = right:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    count:SetPoint("LEFT", right.title, "RIGHT", 8, 0)
+    count:SetTextColor(0.75, 0.75, 0.75)
+
+    -- Size buttons, top right of the right column.
+    local function SizeButton(label, delta)
+        local b = CreateFrame("Button", nil, right, "UIPanelButtonTemplate")
+        b:SetSize(24, 20)
+        b:SetText(label)
+        b:SetScript("OnClick", function()
+            local s = (DungeonClearDB.panelScale or SCALE_DEFAULT) + delta
+            s = math.max(SCALE_MIN, math.min(SCALE_MAX, math.floor(s * 10 + 0.5) / 10))
+            DungeonClearDB.panelScale = s
+            if DCShellLayout then DCShellLayout() end
+        end)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:AddLine(DCL("Panel size"))
+            GameTooltip:AddLine(string.format("%.1fx", DungeonClearDB.panelScale or SCALE_DEFAULT), 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        return b
+    end
+    local bigger = SizeButton("+", SCALE_STEP)
+    bigger:SetPoint("TOPRIGHT", right, "TOPRIGHT", -8, -8)
+    local smaller = SizeButton("-", -SCALE_STEP)
+    smaller:SetPoint("RIGHT", bigger, "LEFT", -2, 0)
+
+    local ROW_H, ROWS = 46, 5
+    local rows = {}
+    for i = 1, ROWS do
+        local r = CreateFrame("Frame", nil, right)
+        r:SetHeight(ROW_H)
+        r:SetPoint("TOPLEFT", right, "TOPLEFT", 10, -40 - (i - 1) * (ROW_H + 6))
+        r:SetPoint("RIGHT", right, "RIGHT", -10, 0)
+        r:SetBackdrop({
+            bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 12, edgeSize = 10,
+            insets = { left = 2, right = 2, top = 2, bottom = 2 },
+        })
+        r:SetBackdropColor(0.06, 0.08, 0.12, 0.70)
+        r:SetBackdropBorderColor(0.25, 0.28, 0.35, 0.8)
+        r.icon = r:CreateTexture(nil, "ARTWORK")
+        r.icon:SetSize(34, 34)
+        r.icon:SetPoint("LEFT", r, "LEFT", 6, 0)
+        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        r.name:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 8, -2)
+        r.name:SetJustifyH("LEFT")
+        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.info:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 8, 2)
+        r.info:SetJustifyH("LEFT")
+        r.role = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        r.role:SetPoint("RIGHT", r, "RIGHT", -10, 0)
+        rows[i] = r
+    end
+
+    local function RoleOf(unit)
+        if not UnitGroupRolesAssigned then return nil end
+        local ok, a, b, c = pcall(UnitGroupRolesAssigned, unit)
+        if not ok then return nil end
+        if type(a) == "string" then  -- some clients return the role name
+            if a == "TANK" then return "Tank" elseif a == "HEALER" then return "Heal" elseif a == "DAMAGER" then return "DPS" end
+            return nil
+        end
+        if a then return "Tank" elseif b then return "Heal" elseif c then return "DPS" end
+        return nil
+    end
+
+    local function FillRow(r, unit)
+        if not unit or not UnitExists(unit) then
+            r.icon:SetTexture("Interface\\PaperDoll\\UI-Backpack-EmptySlot")
+            r.icon:SetTexCoord(0, 1, 0, 1)
+            r.name:SetText("|cff808080" .. DCL("Empty slot") .. "|r")
+            r.info:SetText("")
+            r.role:SetText("")
+            r:SetBackdropColor(0.04, 0.05, 0.07, 0.45)
+            return
+        end
+        r:SetBackdropColor(0.06, 0.08, 0.12, 0.70)
+        local locClass, token = UnitClass(unit)
+        local tc = token and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[token]
+        if tc then
+            r.icon:SetTexture("Interface\\WorldStateFrame\\Icons-Classes")
+            r.icon:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
+        else  -- custom classes (Witch Doctor, Demon Hunter...) have no stock icon
+            r.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+            r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+        end
+        local cc = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
+        local hex = cc and string.format("|cff%02x%02x%02x", cc.r * 255, cc.g * 255, cc.b * 255) or "|cffffffff"
+        r.name:SetText(hex .. (UnitName(unit) or "?") .. "|r")
+        local online = UnitIsConnected(unit)
+        local dead = UnitIsDeadOrGhost(unit)
+        local state = not online and ("|cff808080" .. DCL("offline") .. "|r")
+            or (dead and ("|cffff3333" .. DCL("dead") .. "|r") or "")
+        r.info:SetText(string.format("%s %d  %s  %s", DCL("Lv"), UnitLevel(unit) or 0, locClass or "", state))
+        local role = RoleOf(unit)
+        r.role:SetText(role and ("|cffffd100" .. DCL(role) .. "|r") or "")
+    end
+
+    local function RefreshParty()
+        if not right:IsVisible() then return end
+        local units = { "player" }
+        if GetNumRaidMembers() == 0 then
+            for i = 1, 4 do units[#units + 1] = "party" .. i end
+        end
+        local present = 0
+        for i = 1, ROWS do
+            local u = units[i]
+            if u and not UnitExists(u) then u = nil end
+            if u then present = present + 1 end
+            FillRow(rows[i], u)
+        end
+        if GetNumRaidMembers() > 0 then
+            count:SetText(string.format("%s %d", DCL("raid"), GetNumRaidMembers()))
+        else
+            count:SetText(string.format("%d/5", present))
+        end
+    end
+
+    local ev = CreateFrame("Frame", nil, right)
+    for _, e in ipairs({ "PARTY_MEMBERS_CHANGED", "RAID_ROSTER_UPDATE", "UNIT_LEVEL", "UNIT_CONNECTION",
+                         "PLAYER_ENTERING_WORLD", "UNIT_HEALTH" }) do
+        pcall(ev.RegisterEvent, ev, e)
+    end
+    local dirty = true
+    ev:SetScript("OnEvent", function() dirty = true end)
+    ev:SetScript("OnUpdate", function()
+        if dirty then dirty = false; RefreshParty() end
+    end)
+    right:SetScript("OnShow", function() dirty = true end)
+    shell.right = right
+
+    -- Lay the shell around the window. Called from UpdateLayout (tiny/full switch) and
+    -- whenever the window's height changes (the boss list folds, a warning wraps).
+    function DCShellLayout()
+        local tiny = DungeonClearDB.tinyMode
+        if tiny then
+            shell:Hide()
+            frame:SetScale(1)
+            frame:SetBackdropColor(0.03, 0.03, 0.05, 0.90)
+            frame:SetBackdropBorderColor(0.20, 0.22, 0.28, 1.0)
+            frame:SetClampRectInsets(0, 0, 0, 0)
+            return
+        end
+        frame:SetScale(DungeonClearDB.panelScale or SCALE_DEFAULT)
+        -- the window becomes the centre column: no box of its own over the background
+        frame:SetBackdropColor(0, 0, 0, 0)
+        frame:SetBackdropBorderColor(0, 0, 0, 0)
+        local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2)
+        shell:ClearAllPoints()
+        shell:SetPoint("TOPLEFT", frame, "TOPLEFT", -(COL_W + GAP + PAD), PAD)
+        shell:SetSize(SHELL_W, h)
+        left:ClearAllPoints()
+        left:SetPoint("TOPLEFT", shell, "TOPLEFT", PAD, -PAD)
+        left:SetPoint("BOTTOMLEFT", shell, "BOTTOMLEFT", PAD, PAD)
+        right:ClearAllPoints()
+        right:SetPoint("TOPRIGHT", shell, "TOPRIGHT", -PAD, -PAD)
+        right:SetPoint("BOTTOMRIGHT", shell, "BOTTOMRIGHT", -PAD, PAD)
+        -- keep the WHOLE panel on screen, not just the centre window
+        frame:SetClampRectInsets(-(COL_W + GAP + PAD), COL_W + GAP + PAD, PAD, -(h - frame:GetHeight() - PAD))
+        shell:Show()
+        dirty = true
+    end
+    frame:HookScript("OnSizeChanged", function()
+        if not DungeonClearDB.tinyMode and shell:IsShown() then
+            local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2)
+            if math.abs(shell:GetHeight() - h) > 0.5 then shell:SetHeight(h) end
+        end
+    end)
+    DCLoc.OnChange(function() dirty = true end)
+end
 
 -- Layout saving on drag stop
 frame:SetScript("OnDragStop", function(self)
