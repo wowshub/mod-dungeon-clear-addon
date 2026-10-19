@@ -6679,7 +6679,7 @@ do
         r.range:SetPoint("RIGHT", r.info, "LEFT", -4, 0)
     end
     local function Fill(bg, fg, cur, max, c)
-        local w = tonumber(bg:GetWidth()) or 0
+        local w = tonumber((bg:GetWidth())) or 0
         if not max or max <= 0 or w <= 0 then bg:Hide(); fg:Hide(); return end
         local f = math.max(0, math.min(1, (cur or 0) / max))
         bg:Show()
@@ -6695,10 +6695,12 @@ do
         for _, r in ipairs(rrow) do
             local u = r.unit
             if r:IsShown() and u and UnitExists(u) and UnitIsConnected(u) then
-                local hp, hpMax = tonumber(UnitHealth(u)) or 0, tonumber(UnitHealthMax(u)) or 0
+                -- DCUI3E2: one value each -- UnitPowerType also returns a token ("MANA"),
+                -- which tonumber() took as its base
+                local hp, hpMax = tonumber((UnitHealth(u))) or 0, tonumber((UnitHealthMax(u))) or 0
                 local f = hpMax > 0 and hp / hpMax or 0
                 Fill(r.hpBg, r.hp, hp, hpMax, f > 0.5 and { 0.15, 0.85, 0.25 } or (f > 0.25 and { 1, 0.75, 0.1 } or { 1, 0.2, 0.15 }))
-                Fill(r.mpBg, r.mp, tonumber(UnitPower(u)) or 0, tonumber(UnitPowerMax(u)) or 0, POWER[tonumber(UnitPowerType(u)) or 0] or POWER[0])
+                Fill(r.mpBg, r.mp, tonumber((UnitPower(u))) or 0, tonumber((UnitPowerMax(u))) or 0, POWER[tonumber((UnitPowerType(u))) or 0] or POWER[0])
                 local tag = ""
                 if not UnitIsUnit(u, "player") then
                     if not UnitIsVisible(u) then tag = "|cff9a9a9a" .. DCL("not nearby") .. "|r"
