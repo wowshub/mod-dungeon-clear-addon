@@ -4439,6 +4439,10 @@ do
         prow[i] = r
     end
     local function RoleOf(unit)
+        -- RebornWOW DCUI3C5: the server's answer (partyroles) first -- a hand-made party
+        -- has no LFG roles on the client
+        local known = shell.roles and shell.roles[UnitName(unit) or ""]
+        if known == "t" then return "Tank" elseif known == "h" then return "Heal" elseif known == "d" then return "DPS" end
         if not UnitGroupRolesAssigned then return nil end
         local ok, a, b, c = pcall(UnitGroupRolesAssigned, unit)
         if not ok then return nil end
@@ -4497,7 +4501,14 @@ do
                                     token = token, online = online, dead = dead }
             end
         end
-        table.sort(list, function(a, b) if a.sub ~= b.sub then return a.sub < b.sub end return a.i < b.i end)
+        -- DCUI3C5: you first, then tank -> healer -> DPS, then subgroup
+        local me, RANK = UnitName("player"), { Tank = 1, Heal = 2, DPS = 3 }
+        for _, d in ipairs(list) do d.rank = (d.name == me) and 0 or (RANK[RoleOf(d.unit) or ""] or 4) end
+        table.sort(list, function(a, b)
+            if a.rank ~= b.rank then return a.rank < b.rank end
+            if a.sub ~= b.sub then return a.sub < b.sub end
+            return a.i < b.i
+        end)
         raidOffset = math.max(0, math.min(raidOffset, #list - RAID_ROWS))
         for i, r in ipairs(rrow) do
             local d = list[i + raidOffset]
@@ -4522,11 +4533,32 @@ do
         if not col4:IsVisible() then return end
         if shell.c2 and shell.c2.active then return end  -- DCUI3C2: groups page shown
         local n = GetNumRaidMembers() or 0
+        -- DCUI3C5: roles from the server -- at once when someone is unknown, else every 15 s
+        if n > 0 or (GetNumPartyMembers() or 0) > 0 then
+            local missing = false
+            for i = 1, (n > 0 and n or 4) do
+                local nm = UnitName((n > 0 and "raid" or "party") .. i)
+                if nm and not (shell.roles and shell.roles[nm]) then missing = true end
+            end
+            local wait = missing and 3 or 15
+            if GetTime() - (shell.rolesAskedAt or -100) > wait then
+                shell.rolesAskedAt = GetTime()
+                SendDcCommand("partyroles", "", true)
+            end
+        end
         if n > 0 then RefreshRaid(n) return end
         for _, r in ipairs(rrow) do r:Hide() end
         raidOffset = 0
         local units = { "player" }
-        for i = 1, 4 do units[#units + 1] = "party" .. i end
+        -- DCUI3C5: you first, then tank -> healer -> DPS
+        local others, RANK = {}, { Tank = 1, Heal = 2, DPS = 3 }
+        for i = 1, 4 do if UnitExists("party" .. i) then others[#others + 1] = "party" .. i end end
+        table.sort(others, function(a, b)
+            local ra, rb = RANK[RoleOf(a) or ""] or 4, RANK[RoleOf(b) or ""] or 4
+            if ra ~= rb then return ra < rb end
+            return a < b
+        end)
+        for _, u in ipairs(others) do units[#units + 1] = u end
         local present = 0
         for i = 1, ROWS do
             local u = units[i]
@@ -5873,6 +5905,14 @@ do
         if (kind == "BI" or kind == "BI_END") and shell.c2 and shell.c2.OnBI then shell.c2.OnBI(kind, msg) end  -- DCUI3C2
         if (kind == "FILL" or kind == "FILL_END") and shell.c3 and shell.c3.OnFill then shell.c3.OnFill(msg) end  -- DCUI3C3
         if kind and kind:sub(1, 2) == "MR" and shell.runs and shell.runs.OnMsg then shell.runs.OnMsg(kind, msg) end  -- DCRUN1A
+        -- DCUI3C5: party roles
+        if kind == "PR_START" then shell.rolesNew = {}; return end
+        if kind == "PR" then
+            local _, nm, role = strsplit("\t", msg)
+            if shell.rolesNew and nm then shell.rolesNew[nm] = role end
+            return
+        end
+        if kind == "PR_END" then shell.roles = shell.rolesNew or {}; shell.rolesNew = nil; partyDirty = true; return end
         if (kind == "BI" or kind == "BI_END") and shell.picker and shell.picker.OnBI then shell.picker.OnBI(kind, msg) end  -- DCTEST8A
         if (kind == "RO_START" or kind == "RO" or kind == "RO_END") and shell.rosterOwner == "picker" and shell.picker then
             shell.picker.OnRoster(kind, msg)   -- DCTEST8A: the picker asked, not the invite column
