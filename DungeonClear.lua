@@ -4117,7 +4117,8 @@ do
     glow:SetGradientAlpha("VERTICAL", 0.20, 0.30, 0.40, 0.00, 0.20, 0.30, 0.40, 0.18)
     -- Painted backgrounds (Codex DCUI3BG candidates A/B/C, 2048x1024 BLP2/DXT1, the art in
     -- the top 2048x984). The "Background" button cycles A -> B -> C -> none so the three
-    -- can be compared in game; the choice is saved (DungeonClearDB.panelBg).
+    -- can be compared in game; the choice is saved (DungeonClearDB.panelBgChoice).
+    -- All three stay; B opens by default (RebornWOW DCUI3B3).
     local BGS = { { "A", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_A_v1", "A: cold titan hall" },
                   { "B", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_B_v1", "B: warm dwarven vault" },
                   { "C", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_C_v1", "C: frost mist ruins" },
@@ -4127,7 +4128,7 @@ do
     art:SetTexCoord(0, 1, 0, 984 / 1024)
     local columns = {}
     local function BgIndex()
-        for i, b in ipairs(BGS) do if b[1] == (DungeonClearDB.panelBg or "A") then return i end end
+        for i, b in ipairs(BGS) do if b[1] == (DungeonClearDB.panelBgChoice or "B") then return i end end
         return 1
     end
     local function PaintBg()
@@ -4626,7 +4627,7 @@ do
     bgBtn:SetPoint("RIGHT", smaller, "LEFT", -4, 0)
     local function PaintBgBtn() bgBtn:SetText(DCL("Background") .. " " .. BGS[BgIndex()][1]:gsub("none", "-")) end
     bgBtn:SetScript("OnClick", function(self)
-        DungeonClearDB.panelBg = BGS[BgIndex() % #BGS + 1][1]
+        DungeonClearDB.panelBgChoice = BGS[BgIndex() % #BGS + 1][1]
         PaintBg(); PaintBgBtn()
         if GameTooltip:IsOwned(self) then self:GetScript("OnEnter")(self) end
     end)
