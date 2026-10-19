@@ -4016,7 +4016,7 @@ UpdateLayout = function()
     end
     if UpdatePullControls then UpdatePullControls() end
     UpdateFrameHeight()
-    if DCShellLayout then DCShellLayout() end  -- RebornWOW DCUI3A: the three-column shell
+    if DCShellLayout then DCShellLayout() end  -- RebornWOW DCUI3A/3B: the five-column shell
 end
 
 tinyBtn:SetScript("OnClick", function()
@@ -4029,219 +4029,618 @@ toggleBossesBtn:SetScript("OnClick", function()
     UpdateLayout()
 end)
 
--- RebornWOW DCUI3A: the three-column panel (design doc §15). The existing window is the
--- CENTRE column and keeps every control and every rule it has (dynamic height, the
--- top-left pin, tiny mode). A shell is hung around it: a left column (dungeon runs,
--- DCRUN1A), a right column (my party, DCPB1A) and one background behind all three.
+-- RebornWOW DCUI3A/3B: the FIVE-column panel (design doc §15). The existing window is
+-- the CENTRE column and keeps every control and every rule it has (dynamic height, the
+-- top-left pin, tiny mode). A shell is hung around it, left to right:
+--   1 every dungeon and raid (server "dungeons"), with dungeon-clear support and the
+--     last test result; right-click for the GM teleport / test
+--   2 dungeon runs (DCRUN1A fills it)
+--   3 the existing window
+--   4 my party, live
+--   5 a roster to invite from: my account / online bots / npcbots / real players /
+--     favourites / search (server "roster")
 -- The shell is a child of the window, so dragging, closing and hiding follow for free;
--- the whole thing scales together (DungeonClearDB.panelScale, 0.8-1.6, default 1.25).
+-- the whole thing scales together (DungeonClearDB.panelScale5, 0.6-1.6, default 1.0).
 -- Tiny mode drops back to the old single bar. A do-block keeps its locals out of the
 -- main chunk's 200-local budget.
 do
-    local COL_W, GAP, PAD = 310, 10, 10
-    local SHELL_W = COL_W + GAP + 330 + GAP + COL_W + PAD * 2   -- 990
-    local SHELL_H = math.floor(SHELL_W / 2.08 + 0.5)              -- the background's 1612:774
-    local SCALE_MIN, SCALE_MAX, SCALE_STEP, SCALE_DEFAULT = 0.8, 1.6, 0.1, 1.25
+    local W1, W2, WC, W4, W5 = 250, 270, 330, 270, 280
+    local GAP, PAD = 8, 10
+    local SHELL_W = W1 + W2 + WC + W4 + W5 + GAP * 4 + PAD * 2    -- 1452
+    local SHELL_H = math.floor(SHELL_W / 2.08 + 0.5)                -- the background's 1612:774
+    local CENTRE_X = PAD + W1 + GAP + W2 + GAP                      -- the window's left edge in the shell
+    local SCALE_MIN, SCALE_MAX, SCALE_STEP, SCALE_DEFAULT = 0.6, 1.6, 0.1, 1.0
+    -- Default: as large as fits 95% of the screen width (1452 wide does not fit 1080p at
+    -- 1.0); once +/- is used, the player's own value.
+    local function Scale()
+        if DungeonClearDB.panelScale5 then return DungeonClearDB.panelScale5 end
+        local w = UIParent and tonumber(UIParent:GetWidth())
+        if not w or w <= 0 then return SCALE_DEFAULT end
+        return math.max(SCALE_MIN, math.min(SCALE_DEFAULT, math.floor(w * 0.95 / SHELL_W * 20) / 20))
+    end
+    local function Shown(w, on) if on then w:Show() else w:Hide() end end  -- no SetShown on this client
 
+    -- ------------------------------------------------------------ class icons
+    -- Stock classes from the stock sheet; the Reborn custom classes from their own art
+    -- (the Witch Doctor's round portrait, the Monk compat sheet). Never a question mark
+    -- for a class we know.
+    local CLASS_BY_ID = { [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE", [5] = "PRIEST",
+                          [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE", [9] = "WARLOCK", [11] = "DRUID",
+                          [13] = "WITCHDOCTOR", [14] = "MONK" }
+    local CUSTOM_ICON = {
+        WITCHDOCTOR = { "Interface\\AddOns\\RebornWitchDoctorTalents\\Art\\UI-CHARACTERCREATE-CLASSES-ROUND", 0.75, 0.875, 0.75, 1.0 },
+        WITCH_DOCTOR = { "Interface\\AddOns\\RebornWitchDoctorTalents\\Art\\UI-CHARACTERCREATE-CLASSES-ROUND", 0.75, 0.875, 0.75, 1.0 },
+        MONK = { "Interface\\Glues\\CharacterCreate\\Reborn-Monk-Classes", 0.125, 0.25, 0, 0.125 },
+    }
+    local CUSTOM_NAME = { WITCHDOCTOR = "Witch Doctor", WITCH_DOCTOR = "Witch Doctor", MONK = "Monk" }
+    local function SetClassIcon(tex, token)
+        local c = token and CUSTOM_ICON[token]
+        if c then
+            tex:SetTexture(c[1]); tex:SetTexCoord(c[2], c[3], c[4], c[5]); return
+        end
+        local tc = token and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[token]
+        if tc then
+            tex:SetTexture("Interface\\WorldStateFrame\\Icons-Classes"); tex:SetTexCoord(tc[1], tc[2], tc[3], tc[4]); return
+        end
+        tex:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark"); tex:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    end
+    local function ClassHex(token)
+        local cc = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
+        return cc and string.format("|cff%02x%02x%02x", cc.r * 255, cc.g * 255, cc.b * 255) or "|cffffffff"
+    end
+    local function ClassName(token)
+        if not token then return "" end
+        if CUSTOM_NAME[token] then return DCL(CUSTOM_NAME[token]) end
+        return (LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[token]) or token
+    end
+
+    -- ------------------------------------------------------------ shell + background
     local shell = CreateFrame("Frame", "DungeonClearShell", frame)
     shell:SetFrameLevel(math.max(0, frame:GetFrameLevel() - 1))
     shell:EnableMouse(true)  -- clicks on the shell drag the window like its own body
     shell:RegisterForDrag("LeftButton")
     shell:SetScript("OnDragStart", function() if frame:GetScript("OnDragStart") then frame:GetScript("OnDragStart")(frame) end end)
     shell:SetScript("OnDragStop", function() if frame:GetScript("OnDragStop") then frame:GetScript("OnDragStop")(frame) end end)
-    shell:SetBackdrop({
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = false, edgeSize = 16,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 },
-    })
+    shell:SetBackdrop({ edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", tile = false, edgeSize = 16,
+                        insets = { left = 4, right = 4, top = 4, bottom = 4 } })
     shell:SetBackdropBorderColor(0.42, 0.36, 0.22, 1.0)
-
-    -- Background. Until the painted one arrives (Codex, DCUI3B) a dark cold gradient
-    -- with a lighter band in the middle, the way the painting is meant to read.
+    -- Until the painted background arrives (Codex), a dark cold field with a faint
+    -- lighter band behind the centre, the way the painting is meant to read.
     local bg = shell:CreateTexture(nil, "BACKGROUND")
-    bg:SetPoint("TOPLEFT", 4, -4)
-    bg:SetPoint("BOTTOMRIGHT", -4, 4)
+    bg:SetPoint("TOPLEFT", 4, -4); bg:SetPoint("BOTTOMRIGHT", -4, 4)
     bg:SetTexture(0.05, 0.07, 0.10, 0.97)
     local glow = shell:CreateTexture(nil, "BORDER")
-    glow:SetPoint("TOP", shell, "TOP", 0, -4)
-    glow:SetPoint("BOTTOM", shell, "BOTTOM", 0, 4)
-    glow:SetWidth(360)
+    glow:SetPoint("TOPLEFT", shell, "TOPLEFT", CENTRE_X - 40, -4)
+    glow:SetPoint("BOTTOMLEFT", shell, "BOTTOMLEFT", CENTRE_X - 40, 4)
+    glow:SetWidth(WC + 80)
     glow:SetTexture(0.20, 0.30, 0.40, 1)
     glow:SetGradientAlpha("VERTICAL", 0.20, 0.30, 0.40, 0.00, 0.20, 0.30, 0.40, 0.18)
-    shell.bg = bg
+    -- Painted backgrounds (Codex DCUI3BG candidates A/B/C, 2048x1024 BLP2/DXT1, the art in
+    -- the top 2048x984). The "Background" button cycles A -> B -> C -> none so the three
+    -- can be compared in game; the choice is saved (DungeonClearDB.panelBg).
+    local BGS = { { "A", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_A_v1", "A: cold titan hall" },
+                  { "B", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_B_v1", "B: warm dwarven vault" },
+                  { "C", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_C_v1", "C: frost mist ruins" },
+                  { "none", nil, "No picture" } }
+    local art = shell:CreateTexture(nil, "BACKGROUND", nil, 1)
+    art:SetPoint("TOPLEFT", 4, -4); art:SetPoint("BOTTOMRIGHT", -4, 4)
+    art:SetTexCoord(0, 1, 0, 984 / 1024)
+    local columns = {}
+    local function BgIndex()
+        for i, b in ipairs(BGS) do if b[1] == (DungeonClearDB.panelBg or "A") then return i end end
+        return 1
+    end
+    local function PaintBg()
+        local b = BGS[BgIndex()]
+        if b[2] then art:SetTexture(b[2]); art:Show(); glow:Hide() else art:Hide(); glow:Show() end
+        -- over a picture the columns are lighter glass so the painting reads through
+        for _, c in ipairs(columns) do c:SetBackdropColor(0.02, 0.03, 0.05, b[2] and 0.42 or 0.55) end
+    end
 
-    local function Column(side)
+    local function Column(width, titleKey)
         local c = CreateFrame("Frame", nil, shell)
-        c:SetWidth(COL_W)
-        c:SetBackdrop({
-            bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile = true, tileSize = 12, edgeSize = 12,
-            insets = { left = 3, right = 3, top = 3, bottom = 3 },
-        })
+        c:SetWidth(width)
+        c:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+                        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                        tile = true, tileSize = 12, edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
         c:SetBackdropColor(0.02, 0.03, 0.05, 0.55)
+        columns[#columns + 1] = c
         c:SetBackdropBorderColor(0.20, 0.22, 0.28, 0.9)
         c.title = c:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         c.title:SetPoint("TOPLEFT", c, "TOPLEFT", 12, -10)
         c.title:SetTextColor(0.24, 0.60, 1.0)
+        DCBind(c.title, titleKey)
+        c:EnableMouseWheel(true)
         return c
     end
-
-    -- Left: dungeon runs (DCRUN1A fills it).
-    local left = Column("left")
-    DCBind(left.title, "Dungeon runs")
-    local leftNote = left:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    leftNote:SetPoint("TOPLEFT", left.title, "BOTTOMLEFT", 0, -14)
-    leftNote:SetPoint("RIGHT", left, "RIGHT", -12, 0)
-    leftNote:SetJustifyH("LEFT")
-    leftNote:SetJustifyV("TOP")
-    DCBind(leftNote, "Every dungeon you clear with your party will be listed here (result, bosses, deaths, time, cheat tier), with right-click to run it again, see its stats or delete it. Coming in the next update.")
-    leftNote:SetTextColor(0.65, 0.68, 0.75)
-    shell.left = left
-
-    -- Right: my party (live now; DCPB1A adds the picker on empty slots).
-    local right = Column("right")
-    DCBind(right.title, "My party")
-    local count = right:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    count:SetPoint("LEFT", right.title, "RIGHT", 8, 0)
-    count:SetTextColor(0.75, 0.75, 0.75)
-
-    -- Size buttons, top right of the right column.
-    local function SizeButton(label, delta)
-        local b = CreateFrame("Button", nil, right, "UIPanelButtonTemplate")
-        b:SetSize(24, 20)
-        b:SetText(label)
-        b:SetScript("OnClick", function()
-            local s = (DungeonClearDB.panelScale or SCALE_DEFAULT) + delta
-            s = math.max(SCALE_MIN, math.min(SCALE_MAX, math.floor(s * 10 + 0.5) / 10))
-            DungeonClearDB.panelScale = s
-            if DCShellLayout then DCShellLayout() end
-        end)
-        b:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:AddLine(DCL("Panel size"))
-            GameTooltip:AddLine(string.format("%.1fx", DungeonClearDB.panelScale or SCALE_DEFAULT), 1, 1, 1)
-            GameTooltip:Show()
-        end)
-        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    local function SmallButton(parent, key, w)
+        local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+        b:SetSize(w or 56, 20)
+        DCBind(b, key)
         return b
     end
-    local bigger = SizeButton("+", SCALE_STEP)
-    bigger:SetPoint("TOPRIGHT", right, "TOPRIGHT", -8, -8)
-    local smaller = SizeButton("-", -SCALE_STEP)
-    smaller:SetPoint("RIGHT", bigger, "LEFT", -2, 0)
-
-    local ROW_H, ROWS = 46, 5
-    local rows = {}
-    for i = 1, ROWS do
-        local r = CreateFrame("Frame", nil, right)
-        r:SetHeight(ROW_H)
-        r:SetPoint("TOPLEFT", right, "TOPLEFT", 10, -40 - (i - 1) * (ROW_H + 6))
-        r:SetPoint("RIGHT", right, "RIGHT", -10, 0)
-        r:SetBackdrop({
-            bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile = true, tileSize = 12, edgeSize = 10,
-            insets = { left = 2, right = 2, top = 2, bottom = 2 },
-        })
-        r:SetBackdropColor(0.06, 0.08, 0.12, 0.70)
-        r:SetBackdropBorderColor(0.25, 0.28, 0.35, 0.8)
-        r.icon = r:CreateTexture(nil, "ARTWORK")
-        r.icon:SetSize(34, 34)
-        r.icon:SetPoint("LEFT", r, "LEFT", 6, 0)
-        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        r.name:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 8, -2)
-        r.name:SetJustifyH("LEFT")
-        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        r.info:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 8, 2)
-        r.info:SetJustifyH("LEFT")
-        r.role = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        r.role:SetPoint("RIGHT", r, "RIGHT", -10, 0)
-        rows[i] = r
+    local function Row(parent, h)
+        local r = CreateFrame("Button", nil, parent)
+        r:SetHeight(h)
+        r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+        r.bgt = r:CreateTexture(nil, "BACKGROUND")
+        r.bgt:SetAllPoints()
+        r.bgt:SetTexture(0.06, 0.08, 0.12, 0.55)
+        return r
     end
 
+    local menuFrame = CreateFrame("Frame", "DungeonClearShellMenu", UIParent, "UIDropDownMenuTemplate")
+    local function Chat(cmd) SendChatMessage(cmd, "SAY") end
+
+    -- ============================================================ 1: all dungeons
+    local col1 = Column(W1, "All dungeons")
+    local dlFilter = "all"                    -- all | supported | unsupported
+    local dlRows, dlData, dlOffset = {}, {}, 0
+    local DL_ROW_H, DL_ROWS = 22, 26
+    local dlFilterBtns = {}
+    for i, f in ipairs({ { "all", "All" }, { "supported", "Supported" }, { "unsupported", "Not yet" } }) do
+        local b = SmallButton(col1, f[2], 72)
+        b:SetPoint("TOPLEFT", col1, "TOPLEFT", 10 + (i - 1) * 76, -36)
+        b:SetScript("OnClick", function() dlFilter = f[1]; dlOffset = 0; if DCShellRenderDungeons then DCShellRenderDungeons() end end)
+        dlFilterBtns[f[1]] = b
+    end
+    local dlRefresh = SmallButton(col1, "Load", 50)
+    dlRefresh:SetPoint("TOPRIGHT", col1, "TOPRIGHT", -8, -8)
+    for i = 1, DL_ROWS do
+        local r = Row(col1, DL_ROW_H)
+        r:SetPoint("TOPLEFT", col1, "TOPLEFT", 8, -62 - (i - 1) * DL_ROW_H)
+        r:SetPoint("RIGHT", col1, "RIGHT", -8, 0)
+        r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.text:SetPoint("LEFT", r, "LEFT", 4, 0)
+        r.text:SetPoint("RIGHT", r, "RIGHT", -60, 0)
+        r.text:SetJustifyH("LEFT")
+        r.tag = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        r.tag:SetPoint("RIGHT", r, "RIGHT", -4, 0)
+        dlRows[i] = r
+    end
+    local dlEmpty = col1:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    dlEmpty:SetPoint("TOPLEFT", col1, "TOPLEFT", 12, -66)
+    dlEmpty:SetPoint("RIGHT", col1, "RIGHT", -12, 0)
+    dlEmpty:SetJustifyH("LEFT")
+
+    -- last test result per .dc test token, from the test list's saved history
+    local function LastTest(tokens)
+        local hist = DungeonClearDB.test and DungeonClearDB.test.history
+        if not hist or not tokens then return nil end
+        for _, h in ipairs(hist) do  -- newest first
+            for t in tokens:gmatch("[^,]+") do
+                if h.token == t and h.result and h.result ~= "" then return h.result end
+            end
+        end
+        return nil
+    end
+
+    local SIZE_ORDER = { ["5"] = 1, ["10"] = 2, ["10/25"] = 3, ["20"] = 4, ["25"] = 5, ["40"] = 6 }
+    local function BuildDisplay()
+        local groups, order = {}, {}
+        for _, d in ipairs(dlData) do
+            local ok = dlFilter == "all" or (dlFilter == "supported") == d.supported
+            if ok then
+                local key = (d.raid and "R" or "D") .. d.sizes
+                if not groups[key] then
+                    groups[key] = { raid = d.raid, sizes = d.sizes, list = {} }
+                    order[#order + 1] = key
+                end
+                table.insert(groups[key].list, d)
+            end
+        end
+        table.sort(order, function(a, b)
+            local ga, gb = groups[a], groups[b]
+            if ga.raid ~= gb.raid then return not ga.raid end
+            return (SIZE_ORDER[ga.sizes] or 9) < (SIZE_ORDER[gb.sizes] or 9)
+        end)
+        local out = {}
+        for _, key in ipairs(order) do
+            local g = groups[key]
+            table.sort(g.list, function(a, b)
+                if a.level ~= b.level then return a.level < b.level end
+                return a.name < b.name
+            end)
+            local label = string.format(DCL(g.raid and "%s-player raids" or "%s-player dungeons"), g.sizes)
+            out[#out + 1] = { header = true, text = label .. " (" .. #g.list .. ")" }
+            for _, d in ipairs(g.list) do out[#out + 1] = d end
+        end
+        return out
+    end
+
+    function DCShellRenderDungeons()
+        for k, b in pairs(dlFilterBtns) do if k == dlFilter then b:LockHighlight() else b:UnlockHighlight() end end
+        if #dlData == 0 then
+            dlEmpty:SetText(DCL("Loading the dungeon list..."))
+            for _, r in ipairs(dlRows) do r:Hide() end
+            return
+        end
+        dlEmpty:SetText("")
+        local disp = BuildDisplay()
+        dlOffset = math.max(0, math.min(dlOffset, #disp - DL_ROWS))
+        for i, r in ipairs(dlRows) do
+            local d = disp[i + dlOffset]
+            r.data = d
+            if not d then
+                r:Hide()
+            elseif d.header then
+                r.text:SetText("|cff3da6ff" .. d.text .. "|r"); r.tag:SetText("")
+                r.bgt:SetTexture(0.10, 0.14, 0.22, 0.70)
+                r:Show()
+            else
+                local lv = d.level > 0 and (" |cff999999" .. d.level .. "|r") or ""
+                r.text:SetText((d.supported and "|cffffffff" or "|cff8a8a8a") .. d.name .. "|r" .. lv)
+                local res = LastTest(d.tokens)
+                local tag
+                if not d.supported then tag = "|cff707070" .. DCL("Not yet") .. "|r"
+                elseif res == "success" then tag = "|cff40ff40" .. DCL("Passed") .. "|r"
+                elseif res then tag = "|cffff5050" .. DCL("Failed") .. "|r"
+                else tag = "|cffffd100" .. DCL("Supported") .. "|r" end
+                r.tag:SetText(tag)
+                r.bgt:SetTexture(0.06, 0.08, 0.12, 0.40)
+                r:Show()
+            end
+        end
+    end
+    local function ShowDungeonMenu(d)
+        local first = d.tokens and d.tokens:match("^[^,]+")
+        local menu = {
+            { text = d.name .. "  |cff999999(" .. d.sizes .. ")|r", isTitle = true, notCheckable = true },
+            { text = DCL("Teleport to the entrance (GM)"), notCheckable = true, disabled = not d.supported or (d.x == 0 and d.y == 0),
+              func = function() Chat(string.format(".go xyz %.1f %.1f %.1f %d", d.x, d.y, d.z, d.mapId)) end },
+            { text = DCL("Start a bot test here (GM)"), notCheckable = true, disabled = not first,
+              func = function() Chat(".dc test start " .. first) end },
+            { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end },
+        }
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
+    end
+    for _, r in ipairs(dlRows) do
+        r:SetScript("OnClick", function(self, button)
+            local d = self.data
+            if d and not d.header and button == "RightButton" then ShowDungeonMenu(d) end
+        end)
+        r:SetScript("OnEnter", function(self)
+            local d = self.data
+            if not d or d.header then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(d.name)
+            GameTooltip:AddLine(string.format("%s %s   %s %s", DCL("Players:"), d.sizes, DCL("Lv"), d.level > 0 and d.level or "?"), 1, 1, 1)
+            if d.supported then
+                GameTooltip:AddLine(DCL("Dungeon clear supports this dungeon.") .. (d.rec > 0 and (" " .. DCL("Bot level") .. " " .. d.rec) or ""), 0.4, 1, 0.4, true)
+                local res = LastTest(d.tokens)
+                if res then GameTooltip:AddLine(DCL("Last test:") .. " " .. res, 1, 0.82, 0) end
+            else
+                GameTooltip:AddLine(DCL("Dungeon clear does not support this dungeon yet."), 0.6, 0.6, 0.6, true)
+            end
+            GameTooltip:AddLine(DCL("Right-click: teleport / test (GM)"), 0.7, 0.7, 0.7)
+            GameTooltip:Show()
+        end)
+        r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    col1:SetScript("OnMouseWheel", function(_, delta) dlOffset = dlOffset - delta * 3; DCShellRenderDungeons() end)
+    dlRefresh:SetScript("OnClick", function() SendDcCommand("dungeons", "", true) end)
+
+    -- ============================================================ 2: dungeon runs
+    local col2 = Column(W2, "Dungeon runs")
+    local runsNote = col2:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    runsNote:SetPoint("TOPLEFT", col2.title, "BOTTOMLEFT", 0, -14)
+    runsNote:SetPoint("RIGHT", col2, "RIGHT", -12, 0)
+    runsNote:SetJustifyH("LEFT")
+    DCBind(runsNote, "Every dungeon you clear with your party will be listed here (result, bosses, deaths, time, cheat tier), with right-click to run it again, see its stats or delete it. Coming in the next update.")
+    runsNote:SetTextColor(0.65, 0.68, 0.75)
+
+    -- ============================================================ 4: my party
+    local col4 = Column(W4, "My party")
+    local count = col4:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    count:SetPoint("LEFT", col4.title, "RIGHT", 8, 0)
+    count:SetTextColor(0.75, 0.75, 0.75)
+    local ROW_H, ROWS = 46, 5
+    local prow = {}
+    for i = 1, ROWS do
+        local r = CreateFrame("Frame", nil, col4)
+        r:SetHeight(ROW_H)
+        r:SetPoint("TOPLEFT", col4, "TOPLEFT", 10, -40 - (i - 1) * (ROW_H + 6))
+        r:SetPoint("RIGHT", col4, "RIGHT", -10, 0)
+        r:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                        tile = true, tileSize = 12, edgeSize = 10, insets = { left = 2, right = 2, top = 2, bottom = 2 } })
+        r:SetBackdropBorderColor(0.25, 0.28, 0.35, 0.8)
+        r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(34, 34); r.icon:SetPoint("LEFT", r, "LEFT", 6, 0)
+        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        r.name:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 8, -2); r.name:SetJustifyH("LEFT")
+        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.info:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 8, 2); r.info:SetJustifyH("LEFT")
+        r.role = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); r.role:SetPoint("RIGHT", r, "RIGHT", -10, 0)
+        prow[i] = r
+    end
     local function RoleOf(unit)
         if not UnitGroupRolesAssigned then return nil end
         local ok, a, b, c = pcall(UnitGroupRolesAssigned, unit)
         if not ok then return nil end
-        if type(a) == "string" then  -- some clients return the role name
+        if type(a) == "string" then
             if a == "TANK" then return "Tank" elseif a == "HEALER" then return "Heal" elseif a == "DAMAGER" then return "DPS" end
             return nil
         end
         if a then return "Tank" elseif b then return "Heal" elseif c then return "DPS" end
         return nil
     end
-
-    local function FillRow(r, unit)
+    local function FillParty(r, unit)
         if not unit or not UnitExists(unit) then
-            r.icon:SetTexture("Interface\\PaperDoll\\UI-Backpack-EmptySlot")
-            r.icon:SetTexCoord(0, 1, 0, 1)
-            r.name:SetText("|cff808080" .. DCL("Empty slot") .. "|r")
-            r.info:SetText("")
-            r.role:SetText("")
+            r.icon:SetTexture("Interface\\PaperDoll\\UI-Backpack-EmptySlot"); r.icon:SetTexCoord(0, 1, 0, 1)
+            r.name:SetText("|cff808080" .. DCL("Empty slot") .. "|r"); r.info:SetText(""); r.role:SetText("")
             r:SetBackdropColor(0.04, 0.05, 0.07, 0.45)
             return
         end
         r:SetBackdropColor(0.06, 0.08, 0.12, 0.70)
         local locClass, token = UnitClass(unit)
-        local tc = token and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[token]
-        if tc then
-            r.icon:SetTexture("Interface\\WorldStateFrame\\Icons-Classes")
-            r.icon:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
-        else  -- custom classes (Witch Doctor, Demon Hunter...) have no stock icon
-            r.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-            r.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-        end
-        local cc = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
-        local hex = cc and string.format("|cff%02x%02x%02x", cc.r * 255, cc.g * 255, cc.b * 255) or "|cffffffff"
-        r.name:SetText(hex .. (UnitName(unit) or "?") .. "|r")
-        local online = UnitIsConnected(unit)
-        local dead = UnitIsDeadOrGhost(unit)
-        local state = not online and ("|cff808080" .. DCL("offline") .. "|r")
-            or (dead and ("|cffff3333" .. DCL("dead") .. "|r") or "")
+        SetClassIcon(r.icon, token)
+        r.name:SetText(ClassHex(token) .. (UnitName(unit) or "?") .. "|r")
+        local state = not UnitIsConnected(unit) and ("|cff808080" .. DCL("offline") .. "|r")
+            or (UnitIsDeadOrGhost(unit) and ("|cffff3333" .. DCL("dead") .. "|r") or "")
         r.info:SetText(string.format("%s %d  %s  %s", DCL("Lv"), UnitLevel(unit) or 0, locClass or "", state))
         local role = RoleOf(unit)
         r.role:SetText(role and ("|cffffd100" .. DCL(role) .. "|r") or "")
     end
-
     local function RefreshParty()
-        if not right:IsVisible() then return end
+        if not col4:IsVisible() then return end
         local units = { "player" }
-        if GetNumRaidMembers() == 0 then
-            for i = 1, 4 do units[#units + 1] = "party" .. i end
-        end
+        if GetNumRaidMembers() == 0 then for i = 1, 4 do units[#units + 1] = "party" .. i end end
         local present = 0
         for i = 1, ROWS do
             local u = units[i]
             if u and not UnitExists(u) then u = nil end
             if u then present = present + 1 end
-            FillRow(rows[i], u)
+            FillParty(prow[i], u)
         end
-        if GetNumRaidMembers() > 0 then
-            count:SetText(string.format("%s %d", DCL("raid"), GetNumRaidMembers()))
+        count:SetText(GetNumRaidMembers() > 0 and string.format("%s %d", DCL("raid"), GetNumRaidMembers())
+                      or string.format("%d/5", present))
+    end
+
+    -- ============================================================ 5: roster to invite from
+    local col5 = Column(W5, "Invite")
+    local CATS = { { "account", "My account" }, { "bots", "Online bots" }, { "npcbots", "NPCBots" },
+                   { "players", "Real players" }, { "favorites", "Favorites" }, { "search", "Search" } }
+    local rosterCat, rosterRows, rosterData, rosterOffset = "account", {}, {}, 0
+    local catBtns = {}
+    for i, c in ipairs(CATS) do
+        local b = SmallButton(col5, c[2], 84)
+        b:SetPoint("TOPLEFT", col5, "TOPLEFT", 10 + ((i - 1) % 3) * 88, -36 - math.floor((i - 1) / 3) * 22)
+        catBtns[c[1]] = b
+    end
+    local search = CreateFrame("EditBox", nil, col5, "InputBoxTemplate")
+    search:SetSize(W5 - 30, 20)
+    search:SetPoint("TOPLEFT", col5, "TOPLEFT", 16, -84)
+    search:SetAutoFocus(false)
+    local playerFilter = "all"  -- real players: all | friends | guild
+    local pfBtns = {}
+    for i, f in ipairs({ { "all", "All" }, { "friends", "Friends" }, { "guild", "Guild" } }) do
+        local b = SmallButton(col5, f[2], 60)
+        b:SetPoint("TOPLEFT", col5, "TOPLEFT", 10 + (i - 1) * 64, -84)
+        b:SetScript("OnClick", function() playerFilter = f[1]; if DCShellRenderRoster then DCShellRenderRoster() end end)
+        pfBtns[f[1]] = b
+    end
+    local RS_ROW_H, RS_ROWS = 34, 15
+    for i = 1, RS_ROWS do
+        local r = Row(col5, RS_ROW_H - 2)
+        r:SetPoint("TOPLEFT", col5, "TOPLEFT", 8, -110 - (i - 1) * RS_ROW_H)
+        r:SetPoint("RIGHT", col5, "RIGHT", -8, 0)
+        r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(26, 26); r.icon:SetPoint("LEFT", r, "LEFT", 3, 0)
+        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        r.name:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 6, -1); r.name:SetJustifyH("LEFT")
+        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.info:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 6, 1); r.info:SetJustifyH("LEFT")
+        r.star = CreateFrame("Button", nil, r)
+        r.star:SetSize(16, 16); r.star:SetPoint("RIGHT", r, "RIGHT", -62, 0)
+        r.star.tex = r.star:CreateTexture(nil, "ARTWORK"); r.star.tex:SetAllPoints()
+        r.star.tex:SetTexture("Interface\\TARGETINGFRAME\\UI-RaidTargetingIcon_1")
+        r.act = SmallButton(r, "Invite", 56); r.act:SetPoint("RIGHT", r, "RIGHT", -2, 0)
+        rosterRows[i] = r
+    end
+    local rosterNote = col5:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    rosterNote:SetPoint("TOPLEFT", col5, "TOPLEFT", 12, -114)
+    rosterNote:SetPoint("RIGHT", col5, "RIGHT", -12, 0)
+    rosterNote:SetJustifyH("LEFT")
+
+    -- Favourites are shared with MultiBot's star (MultiBotSave.Favorites) when it is loaded.
+    local function FavTable()
+        if MultiBotSave then
+            MultiBotSave.Favorites = MultiBotSave.Favorites or {}
+            return MultiBotSave.Favorites
+        end
+        DungeonClearDB.favorites = DungeonClearDB.favorites or {}
+        return DungeonClearDB.favorites
+    end
+    local function IsFav(name) return FavTable()[name] == true end
+    local function ToggleFav(name)
+        local t = FavTable()
+        t[name] = (not t[name]) or nil
+        if MultiBot and MultiBot.UpdateFavoritesIndex then pcall(MultiBot.UpdateFavoritesIndex) end
+    end
+
+    local function InGroup(name)
+        if UnitName("player") == name then return true end
+        for i = 1, 4 do if UnitName("party" .. i) == name then return true end end
+        for i = 1, GetNumRaidMembers() do if UnitName("raid" .. i) == name then return true end end
+        return false
+    end
+    local function Invite(d)
+        if d.npc then return end
+        if d.mine and not d.online then
+            Chat(".playerbot bot add " .. d.name)   -- your own offline character: log it in as a bot
         else
-            count:SetText(string.format("%d/5", present))
+            InviteUnit(d.name)
         end
     end
 
-    local ev = CreateFrame("Frame", nil, right)
-    for _, e in ipairs({ "PARTY_MEMBERS_CHANGED", "RAID_ROSTER_UPDATE", "UNIT_LEVEL", "UNIT_CONNECTION",
-                         "PLAYER_ENTERING_WORLD", "UNIT_HEALTH" }) do
+    function DCShellRenderRoster()
+        for k, b in pairs(catBtns) do if k == rosterCat then b:LockHighlight() else b:UnlockHighlight() end end
+        local isPlayers = rosterCat == "players"
+        Shown(search, rosterCat == "search")
+        for k, b in pairs(pfBtns) do
+            Shown(b, isPlayers)
+            if k == playerFilter then b:LockHighlight() else b:UnlockHighlight() end
+        end
+        local list = {}
+        for _, d in ipairs(rosterData) do
+            local keep = true
+            if isPlayers and playerFilter == "friends" then keep = d.friend
+            elseif isPlayers and playerFilter == "guild" then keep = d.guild end
+            if keep then list[#list + 1] = d end
+        end
+        rosterOffset = math.max(0, math.min(rosterOffset, #list - RS_ROWS))
+        rosterNote:SetText(rosterData.loading and DCL("Loading...") or (#list == 0 and DCL("Nobody here.") or ""))
+        for i, r in ipairs(rosterRows) do
+            local d = list[i + rosterOffset]
+            r.data = d
+            if not d then r:Hide() else
+                local token = CLASS_BY_ID[d.cls]
+                SetClassIcon(r.icon, token)
+                r.name:SetText(ClassHex(token) .. d.name .. "|r")
+                local bits = { DCL("Lv") .. " " .. d.level, ClassName(token) }
+                if d.npc then bits[#bits + 1] = "|cff3da6ffNPCBot|r"
+                elseif not d.online then bits[#bits + 1] = "|cff808080" .. DCL("offline") .. "|r" end
+                if d.friend then bits[#bits + 1] = "|cff40ff40" .. DCL("Friend") .. "|r" end
+                if d.guild then bits[#bits + 1] = "|cff40c0ff" .. DCL("Guild") .. "|r" end
+                r.info:SetText(table.concat(bits, "  "))
+                r.star.tex:SetDesaturated(not IsFav(d.name))
+                r.star.tex:SetAlpha(IsFav(d.name) and 1 or 0.35)
+                local inGroup = InGroup(d.name)
+                if d.npc then r.act:Hide()
+                else
+                    r.act:Show()
+                    if inGroup then r.act:Disable() else r.act:Enable() end
+                    DCBind(r.act, inGroup and "In party" or (d.mine and not d.online and "Log in" or "Invite"))
+                end
+                r:Show()
+            end
+        end
+    end
+    local function RequestRoster()
+        rosterData = { loading = true }
+        rosterOffset = 0
+        if rosterCat == "favorites" then
+            local names = {}
+            for n in pairs(FavTable()) do names[#names + 1] = n end
+            if #names == 0 then rosterData = {}; DCShellRenderRoster(); return end
+            local chunk = ""
+            for _, n in ipairs(names) do
+                if #chunk + #n > 200 then SendDcCommand("botinfo", "|" .. chunk, true); chunk = "" end
+                chunk = chunk == "" and n or (chunk .. "," .. n)
+            end
+            SendDcCommand("botinfo", "|" .. chunk, true)
+        else
+            SendDcCommand("roster", rosterCat .. "\t" .. (rosterCat == "search" and (search:GetText() or "") or ""), true)
+        end
+        DCShellRenderRoster()
+    end
+    for _, c in ipairs(CATS) do
+        catBtns[c[1]]:SetScript("OnClick", function() rosterCat = c[1]; RequestRoster() end)
+    end
+    search:SetScript("OnEnterPressed", function(self) self:ClearFocus(); RequestRoster() end)
+    search:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    for _, r in ipairs(rosterRows) do
+        r.act:SetScript("OnClick", function(self) local d = self:GetParent().data; if d then Invite(d) end end)
+        r.star:SetScript("OnClick", function(self) local d = self:GetParent().data; if d then ToggleFav(d.name); DCShellRenderRoster() end end)
+        r.star:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:AddLine(DCL("Add to / remove from favourites")); GameTooltip:Show()
+        end)
+        r.star:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    col5:SetScript("OnMouseWheel", function(_, delta) rosterOffset = rosterOffset - delta * 3; DCShellRenderRoster() end)
+
+    -- ------------------------------------------------------------ server replies
+    local dlPending
+    local ev = CreateFrame("Frame", nil, shell)
+    ev:RegisterEvent("CHAT_MSG_ADDON")
+    for _, e in ipairs({ "PARTY_MEMBERS_CHANGED", "RAID_ROSTER_UPDATE", "UNIT_LEVEL", "PLAYER_ENTERING_WORLD", "UNIT_HEALTH" }) do
         pcall(ev.RegisterEvent, ev, e)
     end
-    local dirty = true
-    ev:SetScript("OnEvent", function() dirty = true end)
-    ev:SetScript("OnUpdate", function()
-        if dirty then dirty = false; RefreshParty() end
+    local partyDirty, rosterDirty = true, false
+    ev:SetScript("OnEvent", function(_, event, prefix, msg)
+        if event ~= "CHAT_MSG_ADDON" then partyDirty = true; rosterDirty = true; return end
+        if prefix ~= "DC" or type(msg) ~= "string" then return end
+        local kind = msg:match("^([^\t]+)")
+        if kind == "DL_START" then dlPending = {}
+        elseif kind == "DL" and dlPending then
+            local _, mapId, raid, sizes, level, rec, heroic, exp, name, tokens, x, y, z = strsplit("\t", msg)
+            dlPending[#dlPending + 1] = { mapId = tonumber(mapId) or 0, raid = raid == "1", sizes = sizes or "?",
+                level = tonumber(level) or 0, rec = tonumber(rec) or 0, heroic = tonumber(heroic) or 0,
+                exp = tonumber(exp) or 0, name = DCLDungeon and DCLDungeon(name or "?") or (name or "?"), tokens = (tokens ~= "-" and tokens) or nil,
+                supported = tokens ~= nil and tokens ~= "-", x = tonumber(x) or 0, y = tonumber(y) or 0, z = tonumber(z) or 0 }
+        elseif kind == "DL_END" and dlPending then
+            dlData = dlPending; dlPending = nil
+            DCShellRenderDungeons()
+        elseif kind == "RO_START" then
+            rosterData = {}
+        elseif kind == "RO" then
+            local _, cat, name, cls, level, race, team, online, mine, extra = strsplit("\t", msg)
+            if cat == rosterCat then
+                extra = extra or "-"
+                rosterData[#rosterData + 1] = { name = name, cls = tonumber(cls) or 0, level = tonumber(level) or 0,
+                    online = online == "1", mine = mine == "1", npc = extra:find("n") ~= nil,
+                    friend = extra:find("f") ~= nil, guild = extra:find("g") ~= nil }
+            end
+        elseif kind == "RO_END" then
+            rosterData.loading = nil
+            DCShellRenderRoster()
+        elseif kind == "BI" and rosterCat == "favorites" then
+            local _, name, cls, level, race, team, online, mine = strsplit("\t", msg)
+            if name and IsFav(name) then
+                for _, d in ipairs(rosterData) do if d.name == name then return end end
+                rosterData[#rosterData + 1] = { name = name, cls = tonumber(cls) or 0, level = tonumber(level) or 0,
+                    online = online == "1", mine = mine == "1" }
+            end
+        elseif kind == "BI_END" and rosterCat == "favorites" then
+            rosterData.loading = nil
+            DCShellRenderRoster()
+        end
     end)
-    right:SetScript("OnShow", function() dirty = true end)
-    shell.right = right
+    ev:SetScript("OnUpdate", function()
+        if partyDirty then partyDirty = false; RefreshParty() end
+        if rosterDirty then rosterDirty = false; if col5:IsVisible() then DCShellRenderRoster() end end
+    end)
+    col4:SetScript("OnShow", function() partyDirty = true end)
 
-    -- Lay the shell around the window. Called from UpdateLayout (tiny/full switch) and
-    -- whenever the window's height changes (the boss list folds, a warning wraps).
+    -- ------------------------------------------------------------ size buttons
+    local function SizeButton(label, delta)
+        local b = CreateFrame("Button", nil, col5, "UIPanelButtonTemplate")
+        b:SetSize(24, 20)
+        b:SetText(label)
+        b:SetScript("OnClick", function()
+            local s = math.max(SCALE_MIN, math.min(SCALE_MAX, math.floor((Scale() + delta) * 10 + 0.5) / 10))
+            DungeonClearDB.panelScale5 = s
+            DCShellLayout()
+        end)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:AddLine(DCL("Panel size"))
+            GameTooltip:AddLine(string.format("%.1fx", Scale()), 1, 1, 1); GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        return b
+    end
+    local bigger = SizeButton("+", SCALE_STEP); bigger:SetPoint("TOPRIGHT", col5, "TOPRIGHT", -8, -8)
+    local smaller = SizeButton("-", -SCALE_STEP); smaller:SetPoint("RIGHT", bigger, "LEFT", -2, 0)
+    local bgBtn = CreateFrame("Button", nil, col5, "UIPanelButtonTemplate")
+    bgBtn:SetSize(64, 20)
+    bgBtn:SetPoint("RIGHT", smaller, "LEFT", -4, 0)
+    local function PaintBgBtn() bgBtn:SetText(DCL("Background") .. " " .. BGS[BgIndex()][1]:gsub("none", "-")) end
+    bgBtn:SetScript("OnClick", function(self)
+        DungeonClearDB.panelBg = BGS[BgIndex() % #BGS + 1][1]
+        PaintBg(); PaintBgBtn()
+        if GameTooltip:IsOwned(self) then self:GetScript("OnEnter")(self) end
+    end)
+    bgBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:AddLine(DCL("Panel background"))
+        GameTooltip:AddLine(DCL(BGS[BgIndex()][3]), 1, 1, 1)
+        GameTooltip:AddLine(DCL("Click: next picture (A / B / C / none)"), 0.7, 0.7, 0.7); GameTooltip:Show()
+    end)
+    bgBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    PaintBg(); PaintBgBtn()
+
+    -- ------------------------------------------------------------ layout
+    local loaded = false
     function DCShellLayout()
-        local tiny = DungeonClearDB.tinyMode
-        if tiny then
+        if DungeonClearDB.tinyMode then
             shell:Hide()
             frame:SetScale(1)
             frame:SetBackdropColor(0.03, 0.03, 0.05, 0.90)
@@ -4249,24 +4648,33 @@ do
             frame:SetClampRectInsets(0, 0, 0, 0)
             return
         end
-        frame:SetScale(DungeonClearDB.panelScale or SCALE_DEFAULT)
-        -- the window becomes the centre column: no box of its own over the background
-        frame:SetBackdropColor(0, 0, 0, 0)
+        frame:SetScale(Scale())
+        frame:SetBackdropColor(0, 0, 0, 0)      -- the window is the centre column now
         frame:SetBackdropBorderColor(0, 0, 0, 0)
         local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2)
         shell:ClearAllPoints()
-        shell:SetPoint("TOPLEFT", frame, "TOPLEFT", -(COL_W + GAP + PAD), PAD)
+        shell:SetPoint("TOPLEFT", frame, "TOPLEFT", -CENTRE_X, PAD)
         shell:SetSize(SHELL_W, h)
-        left:ClearAllPoints()
-        left:SetPoint("TOPLEFT", shell, "TOPLEFT", PAD, -PAD)
-        left:SetPoint("BOTTOMLEFT", shell, "BOTTOMLEFT", PAD, PAD)
-        right:ClearAllPoints()
-        right:SetPoint("TOPRIGHT", shell, "TOPRIGHT", -PAD, -PAD)
-        right:SetPoint("BOTTOMRIGHT", shell, "BOTTOMRIGHT", -PAD, PAD)
+        local x = PAD
+        for _, c in ipairs({ { col1, W1 }, { col2, W2 }, false, { col4, W4 }, { col5, W5 } }) do
+            if c then
+                c[1]:ClearAllPoints()
+                c[1]:SetPoint("TOPLEFT", shell, "TOPLEFT", x, -PAD)
+                c[1]:SetPoint("BOTTOMLEFT", shell, "BOTTOMLEFT", x, PAD)
+                x = x + c[2] + GAP
+            else
+                x = x + WC + GAP
+            end
+        end
         -- keep the WHOLE panel on screen, not just the centre window
-        frame:SetClampRectInsets(-(COL_W + GAP + PAD), COL_W + GAP + PAD, PAD, -(h - frame:GetHeight() - PAD))
+        frame:SetClampRectInsets(-CENTRE_X, SHELL_W - CENTRE_X - WC, PAD, -(h - frame:GetHeight() - PAD))
         shell:Show()
-        dirty = true
+        partyDirty = true
+        if not loaded then
+            loaded = true
+            SendDcCommand("dungeons", "", true)
+            RequestRoster()
+        end
     end
     frame:HookScript("OnSizeChanged", function()
         if not DungeonClearDB.tinyMode and shell:IsShown() then
@@ -4274,7 +4682,12 @@ do
             if math.abs(shell:GetHeight() - h) > 0.5 then shell:SetHeight(h) end
         end
     end)
-    DCLoc.OnChange(function() dirty = true end)
+    DCLoc.OnChange(function()
+        partyDirty = true
+        PaintBgBtn()
+        if DCShellRenderDungeons then DCShellRenderDungeons() end
+        if DCShellRenderRoster then DCShellRenderRoster() end
+    end)
 end
 
 -- Layout saving on drag stop
