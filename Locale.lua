@@ -334,6 +334,9 @@ local zh = {
     -- DCUI3D7
     -- DCUI3D9
     -- DCSB2B
+    -- DCUI3E1
+    ["not nearby"] = "不在附近",
+    ["far"] = "远",
     ["Your party is running dungeon clear (tank: %s). Pick a role on the flashing Auto-play row of the panel and the AI plays your character with the party (suggested: %s); pick Manual to play yourself."] = "队伍正在清本（坦克：%s）。在面板闪烁的“托管”一栏选一个职责，AI 就代你和队伍一起清本（建议：%s），不用再按开始；选“手动”就自己玩。",
     ["Me (chip)"] = "我",
     ["DPS (chip)"] = "输",

@@ -6651,6 +6651,77 @@ do
     end
     end)()
 
+    -- ------------------------------------------------------------ party member state (RebornWOW DCUI3E1)
+    -- Design doc §16.4: each "My party" row gets a thin health bar and power bar along its
+    -- bottom, and "far" (out of 40 yd) / "not nearby" (another map or instance copy, or
+    -- simply far away) before the level. Refreshed twice a second while the column is
+    -- shown. Own function (the main chunk's 200-local limit).
+    ;(function()
+    local POWER = { [0] = { 0.20, 0.45, 1.00 }, [1] = { 0.90, 0.15, 0.15 }, [2] = { 1.00, 0.50, 0.25 },
+                    [3] = { 1.00, 0.85, 0.10 }, [6] = { 0.00, 0.82, 1.00 } }
+    local function Bar(r, y, h)
+        local bg = r:CreateTexture(nil, "BORDER")
+        bg:SetHeight(h); bg:SetTexture(0, 0, 0, 0.55)
+        bg:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 50, y)  -- after the chip and class icon; bg:SetPoint("BOTTOMRIGHT", r, "BOTTOMRIGHT", -4, y)
+        local fg = r:CreateTexture(nil, "ARTWORK")
+        fg:SetHeight(h); fg:SetPoint("BOTTOMLEFT", bg, "BOTTOMLEFT", 0, 0)
+        bg:Hide(); fg:Hide()
+        return bg, fg
+    end
+    for _, r in ipairs(rrow) do
+        r.hpBg, r.hp = Bar(r, 3, 2)
+        r.mpBg, r.mp = Bar(r, 0, 2)
+        r.range = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.range, 11)
+        r.range:SetPoint("RIGHT", r.info, "LEFT", -4, 0)
+    end
+    local function Fill(bg, fg, cur, max, c)
+        local w = tonumber(bg:GetWidth()) or 0
+        if not max or max <= 0 or w <= 0 then bg:Hide(); fg:Hide(); return end
+        local f = math.max(0, math.min(1, (cur or 0) / max))
+        bg:Show()
+        if f <= 0 then fg:Hide() return end
+        fg:SetWidth(math.max(1, w * f)); fg:SetTexture(c[1], c[2], c[3], 0.95); fg:Show()
+    end
+    local function InRange(u)
+        if type(UnitInRange) ~= "function" then return true end
+        local ok, v = pcall(UnitInRange, u)
+        return not ok or v == 1 or v == true
+    end
+    local function Update()
+        for _, r in ipairs(rrow) do
+            local u = r.unit
+            if r:IsShown() and u and UnitExists(u) and UnitIsConnected(u) then
+                local hp, hpMax = tonumber(UnitHealth(u)) or 0, tonumber(UnitHealthMax(u)) or 0
+                local f = hpMax > 0 and hp / hpMax or 0
+                Fill(r.hpBg, r.hp, hp, hpMax, f > 0.5 and { 0.15, 0.85, 0.25 } or (f > 0.25 and { 1, 0.75, 0.1 } or { 1, 0.2, 0.15 }))
+                Fill(r.mpBg, r.mp, tonumber(UnitPower(u)) or 0, tonumber(UnitPowerMax(u)) or 0, POWER[tonumber(UnitPowerType(u)) or 0] or POWER[0])
+                local tag = ""
+                if not UnitIsUnit(u, "player") then
+                    if not UnitIsVisible(u) then tag = "|cff9a9a9a" .. DCL("not nearby") .. "|r"
+                    elseif not InRange(u) then tag = "|cffffb030" .. DCL("far") .. "|r" end
+                end
+                r.range:SetText(tag)
+            else
+                r.hpBg:Hide(); r.hp:Hide(); r.mpBg:Hide(); r.mp:Hide(); r.range:SetText("")
+            end
+        end
+    end
+    local origParty = RefreshParty
+    RefreshParty = function(...)
+        origParty(...)
+        Update()
+    end
+    local tick = CreateFrame("Frame", nil, col4)
+    local acc = 0
+    tick:SetScript("OnUpdate", function(_, e)
+        acc = acc + (e or 0)
+        if acc < 0.5 then return end
+        acc = 0
+        Update()
+    end)
+    shell.partyState = Update
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
