@@ -1839,7 +1839,7 @@ end
           tip = "A party of your own characters, roles in order. They must be OFFLINE (log your bot alts out first): the server logs them in as bots and does not re-gear or re-level them. The character you are playing cannot join a test run - play it with the normal Start button and Auto-play instead." },
     }
     for i, m in ipairs(MODES) do
-        local b = Button(m.label, 96, function() DB().mode = m.key; ApplyMode() end, m.tip)
+        local b = Button(m.label, 80, function() DB().mode = m.key; ApplyMode() end, m.tip)  -- 96 -> 80: DCGM1C2
         if i == 1 then b:SetPoint("LEFT", modeLabel, "RIGHT", 6, 0)
         else b:SetPoint("LEFT", modeBtns[i - 1], "RIGHT", 2, 0) end
         b.key = m.key
@@ -1873,7 +1873,7 @@ end
         for i, j in ipairs(JOIN) do if j.key == DB().joinMe then return i end end
         return 1
     end
-    tierBtn.join = Button("Me: out", 92, function()
+    tierBtn.join = Button("Me: out", 80, function()  -- 92 -> 80: DCGM1C2, the row fits the window
         local i = tierBtn.JoinIndex() % #JOIN + 1
         DB().joinMe = JOIN[i].key
         DCBind(tierBtn.join, JOIN[i].label)
