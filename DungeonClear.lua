@@ -1164,6 +1164,7 @@ scrollContainer:SetBackdropBorderColor(0.15, 0.17, 0.22, 0.8)
 -- a fixed band) so the name can wrap freely and the note floats down with it.
 local ROW_HEIGHT = 48
 local VISIBLE_ROWS = 4
+local BOSS_ROWS_MAX = 12  -- RebornWOW DCUI3B5: the five-column panel shows as many as fit
 
 -- Row width, chosen per redraw by FitRows. The scroll frame reserves 28px on its
 -- right for the scrollbar whether or not one is showing, and the rows were a
@@ -1189,7 +1190,7 @@ scrollFrame:SetScript("OnMouseWheel", function(self, delta)
 end)
 
 -- Pre-create the visible row pool inside scrollContainer, anchored to scrollFrame
-for i = 1, VISIBLE_ROWS do
+for i = 1, BOSS_ROWS_MAX do
     local row = CreateFrame("Frame", nil, scrollContainer)
     row:SetSize(ROW_W, ROW_HEIGHT - 2)
     row:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, -(i - 1) * ROW_HEIGHT)
@@ -1258,6 +1259,7 @@ for i = 1, VISIBLE_ROWS do
 
     bossRows[i] = row
 end
+for i = VISIBLE_ROWS + 1, BOSS_ROWS_MAX do bossRows[i]:Hide() end
 
 -- Give the rows back the scrollbar's strip whenever no scrollbar is showing.
 -- FauxScrollFrame shows one exactly when there are more bosses than visible
@@ -3918,6 +3920,20 @@ local function BelowActionRow()
     return LIST_GAP + capH + LIST_PAD + LIST_H
 end
 
+-- RebornWOW DCUI3B5: in the five-column panel the boss list reaches the panel bottom
+-- (DCShellTargetHeight, set by the shell) and shows as many rows as fit.
+local LIST_H_BASE = LIST_H
+local function SetBossListHeight(h)
+    LIST_H = h
+    scrollContainer:SetHeight(h)
+    local rows = math.max(4, math.min(BOSS_ROWS_MAX, math.floor((h - 16) / ROW_HEIGHT)))
+    if rows ~= VISIBLE_ROWS then
+        VISIBLE_ROWS = rows
+        for i = rows + 1, BOSS_ROWS_MAX do bossRows[i]:Hide() end
+        if RedrawBossList then RedrawBossList() end
+    end
+end
+
 UpdateFrameHeight = function()
     if DungeonClearDB.tinyMode then
         SetFrameHeight(28)
@@ -3934,7 +3950,12 @@ UpdateFrameHeight = function()
         --   8   gap, then the 24px action row
         --   +   the stack below it (BelowActionRow)
         --   12  bottom padding
-        SetFrameHeight(35 + statusFrame:GetHeight() + 8 + 24 + BelowActionRow() + 12)
+        local function Natural() return 35 + statusFrame:GetHeight() + 8 + 24 + BelowActionRow() + 12 end
+        -- RebornWOW DCUI3B5: the five-column panel stretches the boss list to its bottom
+        local want = (DCShellTargetHeight and not DungeonClearDB.bossesFolded) and DCShellTargetHeight or nil
+        local listH = want and math.max(LIST_H_BASE, LIST_H + want - Natural()) or LIST_H_BASE
+        if math.abs(listH - LIST_H) >= 1 then SetBossListHeight(listH) end
+        SetFrameHeight(Natural())
     end
 end
 
@@ -4126,7 +4147,8 @@ do
     glow:SetGradientAlpha("VERTICAL", 0.20, 0.30, 0.40, 0.00, 0.20, 0.30, 0.40, 0.18)
     -- Painted backgrounds (Codex DCUI3BG candidates A/B/C, 2048x1024 BLP2/DXT1, the art in
     -- the top 2048x984). The "Background" button cycles A -> B -> C -> none so the three
-    -- can be compared in game; the choice is saved (DungeonClearDB.panelBgChoice).
+    -- can be compared in game. Every login / reload opens on B; the button switches for
+    -- this session only, nothing is saved (RebornWOW DCUI3B5).
     -- All three stay; B opens by default (RebornWOW DCUI3B3).
     local BGS = { { "A", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_A_v1", "A: cold titan hall" },
                   { "B", "Interface\\AddOns\\DungeonClear\\Art\\DungeonClearBg_B_v1", "B: warm dwarven vault" },
@@ -4136,8 +4158,9 @@ do
     art:SetPoint("TOPLEFT", 4, -4); art:SetPoint("BOTTOMRIGHT", -4, 4)
     art:SetTexCoord(0, 1, 0, 984 / 1024)
     local columns = {}
+    local bgChoice = "B"
     local function BgIndex()
-        for i, b in ipairs(BGS) do if b[1] == (DungeonClearDB.panelBgChoice or "B") then return i end end
+        for i, b in ipairs(BGS) do if b[1] == bgChoice then return i end end
         return 1
     end
     local function PaintBg()
@@ -4395,20 +4418,76 @@ do
         local role = RoleOf(unit)
         r.role:SetText(role and ("|cffffd100" .. DCL(role) .. "|r") or "")
     end
+    -- RebornWOW DCUI3B5: a raid gets compact rows for every member (by subgroup,
+    -- alternate subgroups shaded, wheel to scroll past RAID_ROWS); a party keeps the
+    -- five large rows.
+    local RAID_H, RAID_ROWS = 26, 22
+    local rrow, raidOffset = {}, 0
+    for i = 1, RAID_ROWS do
+        local r = CreateFrame("Frame", nil, col4)
+        r:SetHeight(RAID_H - 2)
+        r:SetPoint("TOPLEFT", col4, "TOPLEFT", 10, -40 - (i - 1) * RAID_H)
+        r:SetPoint("RIGHT", col4, "RIGHT", -10, 0)
+        r.bgt = r:CreateTexture(nil, "BACKGROUND"); r.bgt:SetAllPoints()
+        r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(20, 20); r.icon:SetPoint("LEFT", r, "LEFT", 3, 0)
+        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(r.name, 13)
+        r.name:SetPoint("LEFT", r.icon, "RIGHT", 6, 0); r.name:SetJustifyH("LEFT")
+        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.info, 12)
+        r.info:SetPoint("RIGHT", r, "RIGHT", -6, 0); r.info:SetJustifyH("RIGHT")
+        r:Hide()
+        rrow[i] = r
+    end
+    local function RefreshRaid(n)
+        for _, r in ipairs(prow) do r:Hide() end
+        local list = {}
+        for i = 1, n do
+            local name, _, sub, level, _, token, _, online, dead = GetRaidRosterInfo(i)
+            if name then
+                list[#list + 1] = { unit = "raid" .. i, i = i, name = name, sub = sub or 0, level = level or 0,
+                                    token = token, online = online, dead = dead }
+            end
+        end
+        table.sort(list, function(a, b) if a.sub ~= b.sub then return a.sub < b.sub end return a.i < b.i end)
+        raidOffset = math.max(0, math.min(raidOffset, #list - RAID_ROWS))
+        for i, r in ipairs(rrow) do
+            local d = list[i + raidOffset]
+            if not d then r:Hide() else
+                SetClassIcon(r.icon, d.token)
+                r.name:SetText(ClassHex(d.token) .. d.name .. "|r")
+                local bits = { "|cff3da6ffG" .. d.sub .. "|r", tostring(d.level) }
+                local role = RoleOf(d.unit)
+                if role then bits[#bits + 1] = "|cffffd100" .. DCL(role) .. "|r" end
+                if not d.online then bits[#bits + 1] = "|cff808080" .. DCL("offline") .. "|r"
+                elseif d.dead or UnitIsDeadOrGhost(d.unit) then bits[#bits + 1] = "|cffff3333" .. DCL("dead") .. "|r" end
+                r.info:SetText(table.concat(bits, " "))
+                if d.sub % 2 == 1 then r.bgt:SetTexture(0.03, 0.04, 0.06, 0.72) else r.bgt:SetTexture(0.07, 0.10, 0.16, 0.80) end
+                r:Show()
+            end
+        end
+        local more = #list > RAID_ROWS and ("  |cff999999" .. (raidOffset + 1) .. "-" .. math.min(#list, raidOffset + RAID_ROWS) .. "|r") or ""
+        count:SetText(string.format("%s %d", DCL("raid"), #list) .. more)
+    end
     local function RefreshParty()
         if not col4:IsVisible() then return end
+        local n = GetNumRaidMembers() or 0
+        if n > 0 then RefreshRaid(n) return end
+        for _, r in ipairs(rrow) do r:Hide() end
+        raidOffset = 0
         local units = { "player" }
-        if GetNumRaidMembers() == 0 then for i = 1, 4 do units[#units + 1] = "party" .. i end end
+        for i = 1, 4 do units[#units + 1] = "party" .. i end
         local present = 0
         for i = 1, ROWS do
             local u = units[i]
             if u and not UnitExists(u) then u = nil end
             if u then present = present + 1 end
+            prow[i]:Show()
             FillParty(prow[i], u)
         end
-        count:SetText(GetNumRaidMembers() > 0 and string.format("%s %d", DCL("raid"), GetNumRaidMembers())
-                      or string.format("%d/5", present))
+        count:SetText(string.format("%d/5", present))
     end
+    col4:SetScript("OnMouseWheel", function(_, delta)
+        if (GetNumRaidMembers() or 0) > 0 then raidOffset = raidOffset - delta * 3; RefreshParty() end
+    end)
 
     -- ============================================================ 5: roster to invite from
     local col5 = Column(W5, "Invite")
@@ -4636,12 +4715,61 @@ do
     end
     local bigger = SizeButton("+", SCALE_STEP); bigger:SetPoint("TOPRIGHT", col5, "TOPRIGHT", -8, -8)
     local smaller = SizeButton("-", -SCALE_STEP); smaller:SetPoint("RIGHT", bigger, "LEFT", -2, 0)
+
+    -- RebornWOW DCUI3B5: the scale triangle at the WHOLE panel's bottom-right (it used to
+    -- be RebornWindowScale's, on the centre window; that addon now leaves this window to
+    -- us). Drag = scale the panel with its top-left corner kept still; double-click = the
+    -- size that fits the screen.
+    local function SetPanelScale(sc, keepSaved)
+        sc = math.max(SCALE_MIN, math.min(SCALE_MAX, sc))
+        local l, t = shell:GetLeft(), shell:GetTop()
+        local eff = shell:GetEffectiveScale()
+        if not keepSaved then DungeonClearDB.panelScale5 = sc end
+        frame:SetScale(sc)
+        if l and t then
+            local k = eff / frame:GetEffectiveScale()
+            frame:ClearAllPoints()
+            frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l * k + CENTRE_X, t * k - PAD)
+        end
+    end
+    local function SavePosition()
+        local stop = frame:GetScript("OnDragStop")
+        if stop then pcall(stop, frame) end
+    end
+    local grip = CreateFrame("Button", nil, shell)
+    grip:SetSize(16, 16)
+    grip:SetPoint("BOTTOMRIGHT", shell, "BOTTOMRIGHT", -5, 5)
+    grip:SetFrameLevel(shell:GetFrameLevel() + 60)
+    grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    grip:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT"); GameTooltip:AddLine(DCL("Panel size"), 1, 0.82, 0.3)
+        GameTooltip:AddLine(DCL("Drag: scale the whole panel"), 1, 1, 1)
+        GameTooltip:AddLine(DCL("Double-click: fit the screen"), 1, 1, 1)
+        GameTooltip:AddLine(string.format("%.2fx", Scale()), 0.7, 0.7, 0.7); GameTooltip:Show()
+    end)
+    grip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    grip:SetScript("OnMouseDown", function(self)
+        self.left = shell:GetLeft() * shell:GetEffectiveScale()
+        self:SetScript("OnUpdate", function(g)
+            local cx = GetCursorPosition()
+            local sc = (cx - g.left) / (SHELL_W * UIParent:GetEffectiveScale())
+            if math.abs(sc - frame:GetScale()) > 0.005 then SetPanelScale(sc) end
+        end)
+    end)
+    grip:SetScript("OnMouseUp", function(self) self:SetScript("OnUpdate", nil); SavePosition() end)
+    grip:SetScript("OnDoubleClick", function()
+        DungeonClearDB.panelScale5 = nil
+        SetPanelScale(Scale(), true)
+        SavePosition()
+    end)
     local bgBtn = CreateFrame("Button", nil, col5, "UIPanelButtonTemplate")
     bgBtn:SetSize(64, 20)
     bgBtn:SetPoint("RIGHT", smaller, "LEFT", -4, 0)
     local function PaintBgBtn() bgBtn:SetText(DCL("Background") .. " " .. BGS[BgIndex()][1]:gsub("none", "-")) end
     bgBtn:SetScript("OnClick", function(self)
-        DungeonClearDB.panelBgChoice = BGS[BgIndex() % #BGS + 1][1]
+        bgChoice = BGS[BgIndex() % #BGS + 1][1]
         PaintBg(); PaintBgBtn()
         if GameTooltip:IsOwned(self) then self:GetScript("OnEnter")(self) end
     end)
@@ -4657,6 +4785,7 @@ do
     local loaded = false
     function DCShellLayout()
         if DungeonClearDB.tinyMode then
+            DCShellTargetHeight = nil
             shell:Hide()
             frame:SetScale(1)
             frame:SetBackdropColor(0.03, 0.03, 0.05, 0.90)
@@ -4666,6 +4795,10 @@ do
         end
         frame:SetScale(Scale())
         frame:SetBackdropColor(0, 0, 0, 0)      -- the window is the centre column now
+        if DCShellTargetHeight ~= SHELL_H - PAD * 2 then   -- DCUI3B5: boss list to the bottom
+            DCShellTargetHeight = SHELL_H - PAD * 2
+            UpdateFrameHeight()
+        end
         frame:SetBackdropBorderColor(0, 0, 0, 0)
         local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2)
         shell:ClearAllPoints()

@@ -318,6 +318,8 @@ local zh = {
     ["Empty slot"] = "空位",
     ["raid"] = "团队",
     -- DCUI3B
+    ["Drag: scale the whole panel"] = "拖动：缩放整个面板",  -- DCUI3B5
+    ["Double-click: fit the screen"] = "双击：恢复适合屏幕的大小",  -- DCUI3B5
     ["Unsupported"] = "未支持",  -- DCUI3B4
     ["offline"] = "离线",  -- DCUI3B2
     ["All dungeons"] = "全部副本",
