@@ -6385,7 +6385,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             -- Language: saved choice, or the client locale on first run.
             DCLoc.Init()
 
-            if DungeonClearDB.visible then
+            -- RebornWOW DCUI3C6: only the tiny bar comes back by itself; the five-column
+            -- panel is too big to pop up over the login screens -- open it with the
+            -- minimap button or /dc.
+            if DungeonClearDB.visible and DungeonClearDB.tinyMode then
                 frame:Show()
             else
                 frame:Hide()
