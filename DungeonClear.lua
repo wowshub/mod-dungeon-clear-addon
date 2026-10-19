@@ -4407,7 +4407,8 @@ do
         b:SetPoint("TOPLEFT", col5, "TOPLEFT", 10 + ((i - 1) % 3) * 88, -36 - math.floor((i - 1) / 3) * 22)
         catBtns[c[1]] = b
     end
-    local search = CreateFrame("EditBox", nil, col5, "InputBoxTemplate")
+    -- named: an anonymous InputBoxTemplate loses its middle/right art (RebornWOW DCUI3B2)
+    local search = CreateFrame("EditBox", "DungeonClearShellSearch", col5, "InputBoxTemplate")
     search:SetSize(W5 - 30, 20)
     search:SetPoint("TOPLEFT", col5, "TOPLEFT", 16, -84)
     search:SetAutoFocus(false)
