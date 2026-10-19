@@ -5821,6 +5821,43 @@ do
     DCLoc.OnChange(function() if pf:IsShown() then Render() end end)
     end)()
 
+    -- ------------------------------------------------------------ auto-play question (RebornWOW DCSB2A)
+    -- Design doc §10: when you are a real player in a party whose clear is running, the
+    -- server asks once per run (SBASK <suggested role> <tank>); this pops "auto (tank /
+    -- heal / dps) or manual". The choice can be changed any time on the panel's
+    -- "Auto-play" row. Own function (the main chunk's 200-local limit).
+    ;(function()
+    local ask = CreateFrame("Frame", "DungeonClearSelfBotAsk", UIParent)
+    ask:SetSize(360, 150); ask:SetPoint("TOP", UIParent, "TOP", 0, -180); ask:SetFrameStrata("DIALOG")
+    ask:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                      tile = true, tileSize = 12, edgeSize = 14, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    ask:SetBackdropColor(0.03, 0.04, 0.06, 0.96); ask:SetBackdropBorderColor(0.42, 0.36, 0.22, 1)
+    ask:EnableMouse(true); ask:SetMovable(true); ask:RegisterForDrag("LeftButton")
+    ask:SetScript("OnDragStart", ask.StartMoving); ask:SetScript("OnDragStop", ask.StopMovingOrSizing)
+    ask:Hide()
+    local title = ask:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); title:SetPoint("TOP", 0, -12)
+    DCBind(title, "Let the AI play for you?")
+    local text = ask:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); Crisp(text, 13)
+    text:SetPoint("TOPLEFT", 14, -38); text:SetPoint("RIGHT", ask, "RIGHT", -14, 0); text:SetJustifyH("LEFT")
+    local btns = {}
+    for i, b in ipairs({ { "tank", "Tank" }, { "heal", "Heal" }, { "dps", "DPS" }, { "off", "Manual" } }) do
+        local x = CreateFrame("Button", nil, ask, "UIPanelButtonTemplate")
+        x:SetSize(78, 24)
+        x:SetPoint("BOTTOMLEFT", ask, "BOTTOMLEFT", 14 + (i - 1) * 84, 14)
+        DCBind(x, b[2])
+        x:SetScript("OnClick", function()
+            if b[1] ~= "off" then SendDcCommand("selfbot", b[1], true) end
+            ask:Hide()
+        end)
+        btns[b[1]] = x
+    end
+    function DCShowSelfBotAsk(role, tank)
+        for k, x in pairs(btns) do if k == role then x:LockHighlight() else x:UnlockHighlight() end end
+        text:SetText(string.format(DCL("Your party is running dungeon clear (tank: %s). Pick a role and the AI plays your character with the bots, or stay manual. You can switch any time on the dungeon-clear panel's Auto-play row; leaving the dungeon or the party hands the character back to you."), tank or "?"))
+        ask:Show()
+    end
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
@@ -6250,12 +6287,16 @@ local function OnAddonMessage(prefix, message, channel, sender)
     elseif parts[1] == "SELFBOT_MSG" then
         local kind = parts[2]
         if kind == "fail" then
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[DC] " .. DCL("Auto-play could not start:") .. " " .. (parts[3] or "") .. "|r")
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333[DC] " .. DCL("Auto-play could not start:") .. " " .. DCL(parts[3] or "") .. "|r")  -- DCSB2A: translated
         elseif kind == "no-class-ai" then
             DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00[DC] " .. DCL("This class has no bot AI yet: your character follows the run, dodges ground effects and attacks, but casts no class spells.") .. "|r")
         elseif kind == "role-unsupported" then
             DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00[DC] " .. DCL("This class cannot play that role for the bot AI; it plays by its talents instead.") .. "|r")
+        elseif kind == "revoked" then  -- RebornWOW DCSB2A
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffcc00[DC] " .. DCL("You left the dungeon or the party: auto-play is off, you play your character again.") .. "|r")
         end
+    elseif parts[1] == "SBASK" then  -- RebornWOW DCSB2A: the party's clear asks a real teammate
+        if DCShowSelfBotAsk then DCShowSelfBotAsk(parts[2], parts[3]) end
     elseif parts[1] == "SYNCEND" then
         if OnSettingsSyncBoundary then OnSettingsSyncBoundary("end") end
     elseif parts[1] == "CHAT" then
