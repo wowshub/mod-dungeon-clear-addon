@@ -6457,6 +6457,48 @@ do
     end
     end)()
 
+    -- ------------------------------------------------------------ faction badges (RebornWOW DCUI3D8)
+    -- A small Alliance / Horde banner after each name in the invite list (every category)
+    -- and in "My party", so a mixed-faction party reads at a glance. Own function (the
+    -- main chunk's 200-local limit).
+    ;(function()
+    local FACTION = {
+        [0] = { "Interface\\Icons\\INV_BannerPVP_02", "Alliance" },
+        [1] = { "Interface\\Icons\\INV_BannerPVP_01", "Horde" },
+    }
+    local function Badge(parent, anchor)
+        local t = parent:CreateTexture(nil, "OVERLAY")
+        t:SetSize(14, 14)
+        t:SetPoint("LEFT", anchor, "RIGHT", 4, 0)
+        t:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        t:Hide()
+        return t
+    end
+    local function Set(t, team)
+        local f = team and FACTION[team]
+        if f then t:SetTexture(f[1]); t:Show() else t:Hide() end
+    end
+    for _, r in ipairs(rosterRows) do r.fac = Badge(r, r.name) end
+    for _, r in ipairs(rrow) do r.fac = Badge(r, r.name) end
+    local origRoster = DCShellRenderRoster
+    DCShellRenderRoster = function(...)
+        origRoster(...)
+        for _, r in ipairs(rosterRows) do Set(r.fac, r:IsShown() and r.data and r.data.team) end
+    end
+    local origParty = RefreshParty
+    RefreshParty = function(...)
+        origParty(...)
+        for _, r in ipairs(rrow) do
+            local team
+            if r:IsShown() and r.unit and UnitExists(r.unit) then
+                local fg = UnitFactionGroup(r.unit)
+                team = (fg == "Alliance" and 0) or (fg == "Horde" and 1) or nil
+            end
+            Set(r.fac, team)
+        end
+    end
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
@@ -6504,7 +6546,7 @@ do
                 extra = extra or "-"
                 rosterData[#rosterData + 1] = { name = name, cls = tonumber(cls) or 0, level = tonumber(level) or 0,
                     online = online == "1", mine = mine == "1", npc = extra:find("n") ~= nil,
-                    friend = extra:find("f") ~= nil, guild = extra:find("g") ~= nil }
+                    friend = extra:find("f") ~= nil, guild = extra:find("g") ~= nil, team = tonumber(team) }  -- team: DCUI3D8
             end
         elseif kind == "RO_END" then
             rosterData.loading = nil
@@ -6514,7 +6556,7 @@ do
             if name and IsFav(name) then
                 for _, d in ipairs(rosterData) do if d.name == name then return end end
                 rosterData[#rosterData + 1] = { name = name, cls = tonumber(cls) or 0, level = tonumber(level) or 0,
-                    online = online == "1", mine = mine == "1" }
+                    online = online == "1", mine = mine == "1", team = tonumber(team) }  -- team: DCUI3D8
             end
         elseif kind == "BI_END" and rosterCat == "favorites" then
             rosterData.loading = nil
