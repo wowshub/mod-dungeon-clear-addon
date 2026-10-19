@@ -6666,20 +6666,25 @@ do
     local function Bar(r, y, h)
         local bg = r:CreateTexture(nil, "BORDER")
         bg:SetHeight(h); bg:SetTexture(0, 0, 0, 0.55)
-        bg:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 50, y)  -- after the chip and class icon; bg:SetPoint("BOTTOMRIGHT", r, "BOTTOMRIGHT", -4, y)
+        -- DCUI3E3: two anchors on two lines (an inline comment had swallowed the second)
+        bg:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 50, y)  -- after the chip and class icon
+        bg:SetPoint("BOTTOMRIGHT", r, "BOTTOMRIGHT", -4, y)
         local fg = r:CreateTexture(nil, "ARTWORK")
         fg:SetHeight(h); fg:SetPoint("BOTTOMLEFT", bg, "BOTTOMLEFT", 0, 0)
         bg:Hide(); fg:Hide()
         return bg, fg
     end
     for _, r in ipairs(rrow) do
-        r.hpBg, r.hp = Bar(r, 3, 2)
+        r.hpBg, r.hp = Bar(r, 3, 3)  -- DCUI3E3: health 3 px
         r.mpBg, r.mp = Bar(r, 0, 2)
         r.range = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.range, 11)
         r.range:SetPoint("RIGHT", r.info, "LEFT", -4, 0)
     end
     local function Fill(bg, fg, cur, max, c)
         local w = tonumber((bg:GetWidth())) or 0
+        -- DCUI3E3: the laid-out rect when the width reads 0
+        local l, rt = bg:GetLeft(), bg:GetRight()
+        if (w <= 1) and l and rt and rt > l then w = rt - l end
         if not max or max <= 0 or w <= 0 then bg:Hide(); fg:Hide(); return end
         local f = math.max(0, math.min(1, (cur or 0) / max))
         bg:Show()
@@ -6772,6 +6777,38 @@ do
         SendChatMessage(string.format(".go xyz %.1f %.1f %.1f %d", d.x, d.y, d.z, d.mapId), "SAY")
         DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC] " .. DCL("Teleporting to the entrance; the party follows when you arrive.") .. "|r")
     end
+    end)()
+
+    -- ------------------------------------------------------------ pop-ups on top (RebornWOW DCUI3E3)
+    -- Every DungeonClear pop-up opened behind the big panel (same DIALOG strata, the
+    -- panel's children higher). They sit one strata up, toplevel, raised on show. Some are
+    -- created on first use, so a light watcher applies it as they appear.
+    ;(function()
+    local POPUPS = { "DungeonClearTestFrame", "DungeonClearTestListFrame", "DungeonClearQueueFrame",
+                     "DungeonClearGpsFrame", "DungeonClearChatCopyFrame", "DungeonClearCorpseRunFrame",
+                     "DungeonClearPickerFrame", "DungeonClearRunStatsFrame", "DungeonClearSelfBotAsk",
+                     "DungeonClearBotInspectFrame" }
+    local function Lift(f)
+        if not f or f.dcLifted then return end
+        f.dcLifted = true
+        f:SetFrameStrata("FULLSCREEN_DIALOG")
+        if f.SetToplevel then f:SetToplevel(true) end
+        f:HookScript("OnShow", function(self) self:Raise() end)
+        if f:IsShown() then f:Raise() end
+    end
+    local w = CreateFrame("Frame", nil, UIParent)
+    local acc, left = 0.5, #POPUPS
+    w:SetScript("OnUpdate", function(self, e)
+        acc = acc + (e or 0)
+        if acc < 0.5 then return end
+        acc = 0
+        left = 0
+        for _, n in ipairs(POPUPS) do
+            local f = _G[n]
+            if f then Lift(f) else left = left + 1 end
+        end
+        if left == 0 then self:SetScript("OnUpdate", nil) end
+    end)
     end)()
 
     -- ------------------------------------------------------------ server replies
