@@ -6605,6 +6605,52 @@ do
     end
     end)()
 
+    -- ------------------------------------------------------------ teammate joins from the panel (RebornWOW DCSB2B)
+    -- When the party's clear asks you (SBASK: a real teammate, the run already going),
+    -- the full panel opens and the Auto-play row flashes until you pick a role there
+    -- (or Manual). Picking a role is all it takes: the AI plays your character with the
+    -- party and the panel shows the running clear -- no Start needed. Replaces the
+    -- DCSB2A popup. Own function (the main chunk's 200-local limit).
+    ;(function()
+    if not (selfBotUI and selfBotUI.label and selfBotUI.btns[4]) then return end
+    local glow = CreateFrame("Frame", nil, frame)
+    glow:SetPoint("LEFT", selfBotUI.label, "LEFT", -6, 0)
+    glow:SetPoint("RIGHT", selfBotUI.btns[#selfBotUI.btns], "RIGHT", 5, 0)
+    glow:SetHeight(34)
+    glow:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
+    glow:SetBackdropBorderColor(1, 0.82, 0, 1)
+    local fill = glow:CreateTexture(nil, "BACKGROUND")
+    fill:SetAllPoints(glow); fill:SetTexture(1, 0.82, 0, 0.16)
+    glow:Hide()
+    local t, left = 0, 0
+    glow:SetScript("OnUpdate", function(self, e)
+        t = t + e; left = left - e
+        self:SetAlpha(0.25 + 0.75 * math.abs(math.sin(t * 3)))
+        if left <= 0 then self:Hide() end
+    end)
+    local function Flash(on)
+        if on then t = 0; left = 120; glow:Show() else glow:Hide() end
+    end
+    shell.sbFlash = Flash
+    for i = 1, 4 do
+        selfBotUI.btns[i]:HookScript("OnClick", function()
+            Flash(false)
+            -- the server answers the role first, then the run (from the party's tank)
+            if i < 4 then SendDcCommand("status", "addon") end
+        end)
+    end
+    local ROLE = { tank = "Tank", heal = "Heal", dps = "DPS" }
+    DCShowSelfBotAsk = function(role, tank)
+        DungeonClearDB.tinyMode = false
+        UpdateLayout()
+        frame:Show()
+        SendDcCommand("status", "addon")
+        Flash(true)
+        DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[DC] " .. string.format(DCL("Your party is running dungeon clear (tank: %s). Pick a role on the flashing Auto-play row of the panel and the AI plays your character with the party (suggested: %s); pick Manual to play yourself."),
+            tank or "?", DCL(ROLE[role or ""] or "DPS")) .. "|r")
+    end
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
