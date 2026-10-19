@@ -330,6 +330,13 @@ local zh = {
     -- DCUI3D2
     -- DCUI3D3
     -- DCUI3D5
+    -- DCUI3D6
+    ["Import"] = "导入",
+    ["Copy a group from another character:"] = "从其他角色复制常用组：",
+    ["Copied %s from %s."] = "已复制 %s（来自 %s）。",
+    ["Your other characters have no favourite groups."] = "你的其他角色还没有常用组。",
+    ["Each character keeps its own favourite groups. Import copies a group of another character on this account."] = "每个角色有自己的常用组。“导入”把本账号其他角色的组复制一份到当前角色（复制后各改各的）。",
+    ["Groups of your other characters: use Import to copy one here."] = "想用其他角色的组：点“导入”复制一份过来。",
     ["No favourite groups of this size yet. Form a party and click 'Save current party', or drag characters from the Invite list in (a new group is made for you)."] = "这个人数还没有常用组。组好队后点“保存当前队伍”，或直接把「邀请」列表里的角色拖进来（会自动新建一个组）。",
     ["Clear (short)"] = "清除",
     ["Clear the selection"] = "清除选择",

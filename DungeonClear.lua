@@ -4904,9 +4904,24 @@ do
     local C2 = shell.c2
     local SIZES = { 5, 10, 20, 25, 40 }
     local function Say(m) DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC]|r " .. m) end
+    -- RebornWOW DCUI3D6: every character keeps its own list (DungeonClearDB.dcGroupsByChar[name]).
+    -- The old account-wide list is split once by each group's recorded owner and kept as
+    -- dcGroupsOld; a group of another character is reached through "Import".
     local function Groups()
-        DungeonClearDB.dcGroups = DungeonClearDB.dcGroups or {}
-        return DungeonClearDB.dcGroups
+        local db = DungeonClearDB
+        db.dcGroupsByChar = db.dcGroupsByChar or {}
+        if db.dcGroups then
+            for _, g in ipairs(db.dcGroups) do
+                local key = g.owner or (g.members and g.members[1] and g.members[1].name) or (UnitName("player") or "?")
+                db.dcGroupsByChar[key] = db.dcGroupsByChar[key] or {}
+                table.insert(db.dcGroupsByChar[key], g)
+            end
+            db.dcGroupsOld = db.dcGroups
+            db.dcGroups = nil
+        end
+        local me = UnitName("player") or "?"
+        db.dcGroupsByChar[me] = db.dcGroupsByChar[me] or {}
+        return db.dcGroupsByChar[me]
     end
     local function SizeFor(n) for _, s in ipairs(SIZES) do if n <= s then return s end end return 40 end
     local function RoleFromUnit(unit)
@@ -4927,12 +4942,11 @@ do
     -- RebornWOW DCUI3C4: a group belongs to the character that made it. "This character"
     -- (default) shows only those; "All characters" shows the whole account's. Older
     -- groups: the first member is the owner ("Save current party" stores the saver first).
-    local function Owner(g)
-        if not g.owner then g.owner = (g.members[1] and g.members[1].name) or UnitName("player") end
-        return g.owner
-    end
+    -- DCUI3D6: the list is this character's own, so everything in it is shown
+    local function Owner(g) return UnitName("player") end
     C2.showAll = false
-    function C2.Visible(g) return C2.showAll or Owner(g) == UnitName("player") end
+    function C2.Visible(g) return true end
+    C2.Groups = Groups
 
     -- tabs
     local tabGroups = SmallButton(col4, "Groups (tab)", 60)
@@ -4961,19 +4975,44 @@ do
     btnSave:SetPoint("TOPLEFT", gp, "TOPLEFT", 0, -26)
     local btnNew = SmallButton(gp, "New group", 70)
     btnNew:SetPoint("LEFT", btnSave, "RIGHT", 4, 0)
-    -- DCUI3C4: this character's groups / the whole account's
-    local btnAll = SmallButton(gp, "This character", 60)
+    -- RebornWOW DCUI3D6: "Import" copies a group of another character into this character's list
+    local btnAll = SmallButton(gp, "Import", 60)
     btnAll:SetPoint("LEFT", btnNew, "RIGHT", 4, 0)
-    btnAll:SetScript("OnClick", function(self)
-        C2.showAll = not C2.showAll
-        DCBind(self, C2.showAll and "All characters" or "This character")
-        C2.offset = 0
-        C2.Render()
+    btnAll:SetScript("OnClick", function()
+        local me = UnitName("player") or "?"
+        Groups()  -- the one-time split of the old account list
+        local menu = { { text = DCL("Copy a group from another character:"), isTitle = true, notCheckable = true } }
+        local n = 0
+        for who, list in pairs(DungeonClearDB.dcGroupsByChar or {}) do
+            if who ~= me then
+                for _, g in ipairs(list) do
+                    if n < 20 then
+                        n = n + 1
+                        menu[#menu + 1] = { text = string.format("%s: %s  |cff999999%d/%d|r", who, g.name, #g.members, g.size),
+                            notCheckable = true, func = function()
+                                local copy = { name = g.name, size = g.size, members = {}, owner = me }
+                                for _, m in ipairs(g.members) do
+                                    copy.members[#copy.members + 1] = { name = m.name, cls = m.cls, level = m.level, role = m.role }
+                                end
+                                table.insert(Groups(), copy)
+                                C2.size, C2.open = copy.size, copy
+                                C2.Render()
+                                Say(string.format(DCL("Copied %s from %s."), g.name, who))
+                            end }
+                    end
+                end
+            end
+        end
+        if n == 0 then
+            menu[#menu + 1] = { text = DCL("Your other characters have no favourite groups."), notCheckable = true, disabled = true }
+        end
+        menu[#menu + 1] = { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end }
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
     end)
     btnAll:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:AddLine(DCL(C2.showAll and "All characters" or "This character"))
-        GameTooltip:AddLine(DCL("Click to switch between this character's groups and the groups of every character on the account."), 1, 1, 1, true)
+        GameTooltip:AddLine(DCL("Import"))
+        GameTooltip:AddLine(DCL("Each character keeps its own favourite groups. Import copies a group of another character on this account."), 1, 1, 1, true)
         GameTooltip:Show()
     end)
     btnAll:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -5013,7 +5052,7 @@ do
             end
         end
         empty:SetText(#disp == 0 and (DCL("No favourite groups of this size yet. Form a party and click 'Save current party', or drag characters from the Invite list in (a new group is made for you).")
-                                      .. (C2.showAll and "" or ("\n\n|cff999999" .. DCL("Groups of your other characters: click 'This character' to switch to 'All characters'.") .. "|r"))) or "")
+                                      .. (C2.showAll and "" or ("\n\n|cff999999" .. DCL("Groups of your other characters: use Import to copy one here.") .. "|r"))) or "")
         local gvis = math.min(ROWS, shell.groupVis or ROWS)  -- DCUI3D1
         C2.offset = math.max(0, math.min(C2.offset, #disp - gvis))
         for i, r in ipairs(rows) do
@@ -6302,8 +6341,7 @@ do
         if #list > 0 and C2.open then AddToGroup(C2.open, list) end
     end
     local function NewGroup(size, list)
-        local all = DungeonClearDB.dcGroups or {}
-        DungeonClearDB.dcGroups = all
+        local all = C2.Groups()  -- DCUI3D6: this character's list
         local g = { name = string.format(DCL("Favourite group %d"), #all + 1), size = size, members = {}, owner = UnitName("player") }
         table.insert(all, g)
         if not C2.active then C2.SetActive(true) end
@@ -6317,8 +6355,8 @@ do
         local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
         add({ text = string.format(DCL("Invite the %d selected"), #list), func = function() InviteAll(Selected()) end })
         local groups = {}
-        for _, g in ipairs(DungeonClearDB.dcGroups or {}) do
-            if C2.Visible(g) and #groups < 10 then groups[#groups + 1] = g end
+        for _, g in ipairs(C2.Groups()) do  -- DCUI3D6
+            if #groups < 10 then groups[#groups + 1] = g end
         end
         if #groups > 0 then
             menu[#menu + 1] = { text = DCL("Add to favourite group:"), isTitle = true, notCheckable = true }
