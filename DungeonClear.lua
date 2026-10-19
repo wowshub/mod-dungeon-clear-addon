@@ -1897,17 +1897,48 @@ end
     -- roster options: five name boxes, roles positional
     local rosterGroup = {}
     local rosterBoxes = {}
+    -- RebornWOW DCTEST8A: "..." beside each slot opens the character picker (offline
+    -- characters only: your account, the bot pool near the dungeon's level, favourites,
+    -- search). A field of rosterBoxes, not a new local (the main chunk's 200-local limit).
+    rosterBoxes.Pick = function(i, role)
+        if not DCOpenPicker then return end
+        local t = DB()
+        local level
+        for _, row in ipairs(t.dungeons or {}) do
+            if row.token == t.token then level = (t.heroic and row.heroic) or row.level end
+        end
+        DCOpenPicker({
+            title = string.format(DCL("Test party: %s"), DCL(role)),
+            hint = DCL("A test party needs OFFLINE characters of one faction; the server logs them in as bots."),
+            cats = { "account", "pool", "favorites", "search" },
+            level = level,
+            filter = function(d)
+                if d.npc then return false, DCL("NPCBots cannot join a test run.") end
+                if d.online then return false, DCL("This character is online; a test character must be offline (log it out first).") end
+                return true
+            end,
+            onPick = function(d) rosterBoxes[i]:SetText(d.name) end,
+        })
+    end
     for i, role in ipairs(ROSTER_ROLES) do
         local col, row = (i - 1) % 3, math.floor((i - 1) / 3)
         local l = tf:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         l:SetPoint("TOPLEFT", tf, "TOPLEFT", 16 + col * 116, y - 4 - row * 24)
         DCBind(l, role)
-        local e = EditBox(68)
+        -- DCTEST8A: named (an anonymous InputBoxTemplate loses its middle / right art),
+        -- a little narrower to make room for the picker button
+        local e = CreateFrame("EditBox", "DungeonClearTestRosterBox" .. i, tf, "InputBoxTemplate")
+        e:SetSize(48, 20); e:SetAutoFocus(false)
+        e:SetScript("OnEscapePressed", e.ClearFocus); e:SetScript("OnEnterPressed", e.ClearFocus)
         e:SetPoint("LEFT", l, "RIGHT", 6, 0)
         e:SetScript("OnTextChanged", function(self) DB().roster[i] = self:GetText() end)
         rosterBoxes[i] = e
+        local pick = Button("...", 20, function() rosterBoxes.Pick(i, role) end,
+            "Pick a character from a list: your account's offline characters, the bot pool, favourites or search.")
+        pick:SetPoint("LEFT", e, "RIGHT", 2, 0)
         rosterGroup[#rosterGroup + 1] = l
         rosterGroup[#rosterGroup + 1] = e
+        rosterGroup[#rosterGroup + 1] = pick
     end
     local fillBtn = Button("From party", 80, function()
         -- Party members other than you, in party order; they must log out before the run.
@@ -4617,6 +4648,7 @@ do
         end
     end
     local function RequestRoster()
+        shell.rosterOwner = "panel"  -- DCTEST8A
         rosterData = { loading = true }
         rosterOffset = 0
         if rosterCat == "favorites" then
@@ -5577,6 +5609,203 @@ do
     DCLoc.OnChange(function() R.Render() end)
     end)()
 
+    -- ------------------------------------------------------------ character picker (RebornWOW DCTEST8A)
+    -- Design doc §12.1: one pop-up list to pick a character, shared by callers.
+    --   DCOpenPicker{ title, cats = { "account", "pool", "favorites", "search" }, level = n,
+    --                 filter = function(d) return ok, why end, onPick = function(d) end }
+    -- Categories are the server's roster ones (+ "pool": OFFLINE random-bot characters of
+    -- your faction near `level`) and "favorites" (the shared stars, via botinfo). Replies
+    -- are routed here while the picker owns the request (shell.rosterOwner). Own function +
+    -- a table on the shell (the main chunk's 200-local limit).
+    shell.picker = {}
+    ;(function()
+    local P = shell.picker
+    local CAT_LABEL = { account = "My account", pool = "Bot pool", bots = "Online bots", npcbots = "NPCBots",
+                        players = "Real players", favorites = "Favorites", search = "Search" }
+    local pf = CreateFrame("Frame", "DungeonClearPickerFrame", UIParent)
+    pf:SetSize(320, 470); pf:SetPoint("CENTER", UIParent, "CENTER", 260, 0); pf:SetFrameStrata("DIALOG")
+    pf:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                     tile = true, tileSize = 12, edgeSize = 14, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    pf:SetBackdropColor(0.03, 0.04, 0.06, 0.96); pf:SetBackdropBorderColor(0.42, 0.36, 0.22, 1)
+    pf:EnableMouse(true); pf:SetMovable(true); pf:RegisterForDrag("LeftButton")
+    pf:SetScript("OnDragStart", pf.StartMoving); pf:SetScript("OnDragStop", pf.StopMovingOrSizing)
+    pf:Hide()
+    tinsert(UISpecialFrames, "DungeonClearPickerFrame")
+    local close = CreateFrame("Button", nil, pf, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", -2, -2)
+    local title = pf:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); title:SetPoint("TOPLEFT", 12, -12)
+    title:SetPoint("RIGHT", pf, "RIGHT", -34, 0); title:SetJustifyH("LEFT")
+    local hint = pf:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(hint, 12)
+    hint:SetPoint("TOPLEFT", 12, -36); hint:SetPoint("RIGHT", pf, "RIGHT", -12, 0); hint:SetJustifyH("LEFT")
+    hint:SetTextColor(0.75, 0.78, 0.85)
+    local tabs = {}
+    local search = CreateFrame("EditBox", "DungeonClearPickerSearch", pf, "InputBoxTemplate")
+    search:SetSize(200, 20); search:SetAutoFocus(false)
+    local note = pf:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); Crisp(note, 13)
+    note:SetJustifyH("LEFT")
+    local ROWS, RH = 13, 26
+    local rows, data, offset = {}, {}, 0
+    for i = 1, ROWS do
+        local r = Row(pf, RH - 2)
+        r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(20, 20); r.icon:SetPoint("LEFT", r, "LEFT", 3, 0)
+        r.name = r:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(r.name, 13)
+        r.name:SetPoint("LEFT", r.icon, "RIGHT", 6, 0); r.name:SetJustifyH("LEFT")
+        r.info = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.info, 12)
+        r.info:SetPoint("RIGHT", r, "RIGHT", -6, 0); r.info:SetJustifyH("RIGHT")
+        rows[i] = r
+    end
+
+    local function Say(m) DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC]|r " .. m) end
+    local function Filtered()
+        local list = {}
+        for _, d in ipairs(data) do list[#list + 1] = d end
+        return list
+    end
+    local function Render()
+        local o = P.opts
+        if not o then return end
+        for k, b in pairs(tabs) do if k == P.cat then b:LockHighlight() else b:UnlockHighlight() end end
+        local list = Filtered()
+        note:SetText(P.loading and DCL("Loading...") or (#list == 0 and DCL("Nobody here.") or ""))
+        offset = math.max(0, math.min(offset, #list - ROWS))
+        for i, r in ipairs(rows) do
+            local d = list[i + offset]
+            r.d = d
+            if not d then r:Hide() else
+                local token = CLASS_BY_ID[d.cls]
+                SetClassIcon(r.icon, token)
+                local ok = true
+                if o.filter then ok = o.filter(d) end
+                r.name:SetText((ok and ClassHex(token) or "|cff777777") .. d.name .. "|r")
+                local bits = { DCL("Lv") .. " " .. d.level }
+                if d.npc then bits[#bits + 1] = "|cff3da6ffNPCBot|r"
+                elseif d.online then bits[#bits + 1] = "|cff40ff40" .. DCL("online") .. "|r"
+                else bits[#bits + 1] = "|cff999999" .. DCL("offline") .. "|r" end
+                r.info:SetText(table.concat(bits, "  "))
+                r:Show()
+            end
+        end
+    end
+    local function Request()
+        data, offset = {}, 0
+        P.loading = true
+        shell.rosterOwner = "picker"
+        local o = P.opts
+        if P.cat == "favorites" then
+            local names = {}
+            for n in pairs(FavTable()) do names[#names + 1] = n end
+            if #names == 0 then P.loading = nil; Render(); return end
+            P.wantBI = true
+            local chunk = ""
+            for _, n in ipairs(names) do
+                if #chunk + #n + 1 > 200 then SendDcCommand("botinfo", "|" .. chunk, true); chunk = "" end
+                chunk = chunk == "" and n or (chunk .. "," .. n)
+            end
+            SendDcCommand("botinfo", "|" .. chunk, true)
+        else
+            local q = (P.cat == "search" or P.cat == "pool") and (search:GetText() or "") or ""
+            if P.cat == "pool" then q = q .. "\t" .. tostring(o.level or 0) end
+            SendDcCommand("roster", P.cat .. "\t" .. q, true)
+        end
+        Render()
+    end
+    local function Layout()
+        local o = P.opts
+        for _, b in pairs(tabs) do b:Hide() end
+        local x, y = 10, -58
+        for i, c in ipairs(o.cats) do
+            local b = tabs[c]
+            if not b then
+                b = CreateFrame("Button", nil, pf, "UIPanelButtonTemplate")
+                b:SetSize(96, 20)
+                b:SetScript("OnClick", function() P.cat = c; Request() end)
+                tabs[c] = b
+            end
+            DCBind(b, CAT_LABEL[c] or c)
+            b:ClearAllPoints(); b:SetPoint("TOPLEFT", pf, "TOPLEFT", x + ((i - 1) % 3) * 100, y - math.floor((i - 1) / 3) * 22)
+            b:Show()
+        end
+        local top = y - math.ceil(#o.cats / 3) * 22 - 4
+        search:ClearAllPoints(); search:SetPoint("TOPLEFT", pf, "TOPLEFT", 16, top)
+        note:ClearAllPoints(); note:SetPoint("TOPLEFT", pf, "TOPLEFT", 12, top - 30); note:SetPoint("RIGHT", pf, "RIGHT", -12, 0)
+        for i, r in ipairs(rows) do
+            r:ClearAllPoints()
+            r:SetPoint("TOPLEFT", pf, "TOPLEFT", 8, top - 28 - (i - 1) * RH)
+            r:SetPoint("RIGHT", pf, "RIGHT", -8, 0)
+        end
+    end
+
+    function P.Open(opts)
+        P.opts = opts
+        title:SetText(opts.title or DCL("Pick a character"))
+        hint:SetText(opts.hint or "")
+        P.cat = opts.cats[1]
+        Layout()
+        pf:Show()
+        Request()
+    end
+    DCOpenPicker = P.Open
+
+    -- replies routed here while we own the roster request
+    function P.OnRoster(kind, msg)
+        if kind == "RO_START" then data = {}
+        elseif kind == "RO" then
+            local _, cat, name, cls, level, race, team, online, mine, extra = strsplit("\t", msg)
+            extra = extra or "-"
+            data[#data + 1] = { name = name, cls = tonumber(cls) or 0, level = tonumber(level) or 0, online = online == "1",
+                                mine = mine == "1", npc = extra:find("n") ~= nil, real = extra:find("p") ~= nil }
+        elseif kind == "RO_END" then
+            P.loading = nil
+            shell.rosterOwner = nil
+            Render()
+        end
+    end
+    function P.OnBI(kind, msg)
+        if not (P.wantBI and pf:IsShown() and P.cat == "favorites") then return end
+        if kind == "BI" then
+            local _, name, cls, level, race, team, online, mine = strsplit("\t", msg)
+            if name then
+                for _, d in ipairs(data) do if d.name == name then return end end
+                data[#data + 1] = { name = name, cls = tonumber(cls) or 0, level = tonumber(level) or 0,
+                                    online = online == "1", mine = mine == "1" }
+            end
+        elseif kind == "BI_END" then
+            P.wantBI = nil
+            P.loading = nil
+            Render()
+        end
+    end
+
+    for _, r in ipairs(rows) do
+        r:SetScript("OnClick", function(self)
+            local d, o = self.d, P.opts
+            if not (d and o) then return end
+            if o.filter then
+                local ok, why = o.filter(d)
+                if not ok then Say(why or DCL("This character cannot be picked here.")); return end
+            end
+            if o.onPick then o.onPick(d) end
+            pf:Hide()
+        end)
+        r:SetScript("OnEnter", function(self)
+            local d, o = self.d, P.opts
+            if not (d and o) then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:AddLine(d.name)
+            if o.filter then
+                local ok, why = o.filter(d)
+                if not ok then GameTooltip:AddLine(why or "", 1, 0.4, 0.4, true) end
+            end
+            GameTooltip:AddLine(DCL("Click: pick"), 0.7, 0.7, 0.7)
+            GameTooltip:Show()
+        end)
+        r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    pf:EnableMouseWheel(true)
+    pf:SetScript("OnMouseWheel", function(_, delta) offset = offset - delta * 3; Render() end)
+    search:SetScript("OnEnterPressed", function(self) self:ClearFocus(); if P.cat ~= "search" and P.cat ~= "pool" then P.cat = "search" end; Request() end)
+    search:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    DCLoc.OnChange(function() if pf:IsShown() then Render() end end)
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
@@ -5592,6 +5821,11 @@ do
         if (kind == "BI" or kind == "BI_END") and shell.c2 and shell.c2.OnBI then shell.c2.OnBI(kind, msg) end  -- DCUI3C2
         if (kind == "FILL" or kind == "FILL_END") and shell.c3 and shell.c3.OnFill then shell.c3.OnFill(msg) end  -- DCUI3C3
         if kind and kind:sub(1, 2) == "MR" and shell.runs and shell.runs.OnMsg then shell.runs.OnMsg(kind, msg) end  -- DCRUN1A
+        if (kind == "BI" or kind == "BI_END") and shell.picker and shell.picker.OnBI then shell.picker.OnBI(kind, msg) end  -- DCTEST8A
+        if (kind == "RO_START" or kind == "RO" or kind == "RO_END") and shell.rosterOwner == "picker" and shell.picker then
+            shell.picker.OnRoster(kind, msg)   -- DCTEST8A: the picker asked, not the invite column
+            return
+        end
         if kind == "DL_START" then dlPending = {}
         elseif kind == "DL" and dlPending then
             local _, mapId, raid, sizes, level, rec, heroic, exp, name, tokens, x, y, z = strsplit("\t", msg)

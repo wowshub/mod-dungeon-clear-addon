@@ -323,6 +323,17 @@ local zh = {
     -- DCUI3C3
     -- DCUI3C4
     -- DCRUN1A
+    -- DCTEST8A
+    ["Bot pool"] = "机器人池",
+    ["Pick a character"] = "选择角色",
+    ["online"] = "在线",
+    ["Click: pick"] = "点击：选择",
+    ["This character cannot be picked here."] = "这里不能选这个角色。",
+    ["Test party: %s"] = "测试队伍：%s",
+    ["A test party needs OFFLINE characters of one faction; the server logs them in as bots."] = "测试队伍需要同一阵营的离线角色，服务器会把它们当机器人登录。",
+    ["NPCBots cannot join a test run."] = "NPC 机器人不能进测试队伍。",
+    ["This character is online; a test character must be offline (log it out first)."] = "这个角色在线；测试角色必须离线（先让它下线）。",
+    ["Pick a character from a list: your account's offline characters, the bot pool, favourites or search."] = "从列表里选角色：你账号的离线角色、机器人池、常用或搜索。",
     ["No runs yet. Start dungeon clear with your party; when the run ends (cleared, stopped or wiped) it is listed here."] = "还没有记录。带队开始清本，结束后（全清、停止或团灭）会列在这里。",
     ["Cleared"] = "全清",
     ["Wiped"] = "团灭",
