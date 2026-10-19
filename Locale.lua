@@ -331,6 +331,12 @@ local zh = {
     -- DCUI3D3
     -- DCUI3D5
     -- DCUI3D6
+    -- DCUI3D7
+    ["Into the %d-player group, the people of:"] = "导入到 %d 人组，从这个组：",
+    ["You have no other favourite groups yet."] = "你还没有其他常用组。",
+    ["%s: %d places left -- drag real players or bots in from the Invite list."] = "%s：还差 %d 人，可以从「邀请」列表拖真人或机器人进来。",
+    ["Put the people of another of your favourite groups (a 5- or 10-player one, say) into this size's group; fill the rest from the Invite list."] = "把你另一个常用组（比如 5 人组、10 人组）的人放进当前人数的组；不够的从「邀请」列表补。",
+    ["Import puts the people of another of your groups (a 5- or 10-player one, say) into this size."] = "点“导入”可以把你的 5 人组、10 人组等的人直接放进这个人数的组。",
     ["Import"] = "导入",
     ["Copy a group from another character:"] = "从其他角色复制常用组：",
     ["Copied %s from %s."] = "已复制 %s（来自 %s）。",

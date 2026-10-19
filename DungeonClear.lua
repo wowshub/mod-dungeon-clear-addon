@@ -4975,36 +4975,37 @@ do
     btnSave:SetPoint("TOPLEFT", gp, "TOPLEFT", 0, -26)
     local btnNew = SmallButton(gp, "New group", 70)
     btnNew:SetPoint("LEFT", btnSave, "RIGHT", 4, 0)
-    -- RebornWOW DCUI3D6: "Import" copies a group of another character into this character's list
+    -- RebornWOW DCUI3D7: "Import" puts the people of another of THIS character's groups (a
+    -- 5- or 10-player one, say) into the group of the size on screen -- the open one, or a
+    -- new one -- and says how many places are left for the Invite list to fill
+    function C2.ImportFrom(src)
+        local target = C2.open
+        if not (target and target.size == C2.size and target ~= src) then
+            target = { name = string.format(DCL("%s (%d)"), src.name, C2.size), size = C2.size, members = {},
+                       owner = UnitName("player") }
+            table.insert(Groups(), target)
+            C2.open = target
+        end
+        C2.AddMany(target, src.members)
+        local left = target.size - #target.members
+        if left > 0 then
+            Say(string.format(DCL("%s: %d places left -- drag real players or bots in from the Invite list."), target.name, left))
+        end
+    end
     local btnAll = SmallButton(gp, "Import", 60)
     btnAll:SetPoint("LEFT", btnNew, "RIGHT", 4, 0)
     btnAll:SetScript("OnClick", function()
-        local me = UnitName("player") or "?"
-        Groups()  -- the one-time split of the old account list
-        local menu = { { text = DCL("Copy a group from another character:"), isTitle = true, notCheckable = true } }
+        local menu = { { text = string.format(DCL("Into the %d-player group, the people of:"), C2.size), isTitle = true, notCheckable = true } }
         local n = 0
-        for who, list in pairs(DungeonClearDB.dcGroupsByChar or {}) do
-            if who ~= me then
-                for _, g in ipairs(list) do
-                    if n < 20 then
-                        n = n + 1
-                        menu[#menu + 1] = { text = string.format("%s: %s  |cff999999%d/%d|r", who, g.name, #g.members, g.size),
-                            notCheckable = true, func = function()
-                                local copy = { name = g.name, size = g.size, members = {}, owner = me }
-                                for _, m in ipairs(g.members) do
-                                    copy.members[#copy.members + 1] = { name = m.name, cls = m.cls, level = m.level, role = m.role }
-                                end
-                                table.insert(Groups(), copy)
-                                C2.size, C2.open = copy.size, copy
-                                C2.Render()
-                                Say(string.format(DCL("Copied %s from %s."), g.name, who))
-                            end }
-                    end
-                end
+        for _, g in ipairs(Groups()) do
+            if g ~= C2.open and n < 20 then
+                n = n + 1
+                menu[#menu + 1] = { text = string.format("%s  |cff999999%d/%d|r", g.name, #g.members, g.size), notCheckable = true,
+                                    func = function() C2.ImportFrom(g) end }
             end
         end
         if n == 0 then
-            menu[#menu + 1] = { text = DCL("Your other characters have no favourite groups."), notCheckable = true, disabled = true }
+            menu[#menu + 1] = { text = DCL("You have no other favourite groups yet."), notCheckable = true, disabled = true }
         end
         menu[#menu + 1] = { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end }
         EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
@@ -5012,7 +5013,7 @@ do
     btnAll:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine(DCL("Import"))
-        GameTooltip:AddLine(DCL("Each character keeps its own favourite groups. Import copies a group of another character on this account."), 1, 1, 1, true)
+        GameTooltip:AddLine(DCL("Put the people of another of your favourite groups (a 5- or 10-player one, say) into this size's group; fill the rest from the Invite list."), 1, 1, 1, true)
         GameTooltip:Show()
     end)
     btnAll:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -5052,7 +5053,7 @@ do
             end
         end
         empty:SetText(#disp == 0 and (DCL("No favourite groups of this size yet. Form a party and click 'Save current party', or drag characters from the Invite list in (a new group is made for you).")
-                                      .. (C2.showAll and "" or ("\n\n|cff999999" .. DCL("Groups of your other characters: use Import to copy one here.") .. "|r"))) or "")
+                                      .. (C2.showAll and "" or ("\n\n|cff999999" .. DCL("Import puts the people of another of your groups (a 5- or 10-player one, say) into this size.") .. "|r"))) or "")
         local gvis = math.min(ROWS, shell.groupVis or ROWS)  -- DCUI3D1
         C2.offset = math.max(0, math.min(C2.offset, #disp - gvis))
         for i, r in ipairs(rows) do
