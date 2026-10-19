@@ -320,6 +320,24 @@ local zh = {
     -- DCUI3B
     -- DCUI3C1
     -- DCUI3C2
+    -- DCUI3C3
+    ["Fill up"] = "补满",
+    ["Disband"] = "解散队伍",
+    ["My bots log out"] = "我的机器人下线",
+    ["Invite free online bots of your faction near your level, by the roles the group is missing (tank / healer / DPS)."] = "邀请同阵营、等级相近、没有队伍的在线机器人，按队伍缺的职责（坦克 / 治疗 / 输出）挑选。",
+    ["Remove everyone from the group (you must be the leader)."] = "把所有人移出队伍（需要你是队长）。",
+    ["Log out every character of your own account that is in the group."] = "让队伍里所有你账号的角色下线。",
+    ["You are not in a group."] = "你不在队伍里。",
+    ["You are not the leader. Leave the group?"] = "你不是队长。要离开队伍吗？",
+    ["Disband the group (remove %d)?"] = "解散队伍（移出 %d 人）？",
+    ["None of your own characters are in the group."] = "队伍里没有你账号的角色。",
+    ["Log out your own characters in the group (%d)?"] = "让队伍里你账号的角色下线（%d 个）？",
+    ["Fill the group to:"] = "补满到：",
+    ["%d players"] = "%d 人",
+    ["Looking for online bots..."] = "正在找在线机器人……",
+    ["The group is already that size."] = "队伍已经有这么多人了。",
+    ["No free online bots near your level."] = "附近等级没有空闲的在线机器人。",
+    ["Found %d of %d needed; inviting..."] = "找到 %d 个（需要 %d 个），正在邀请……",
     ["Party (tab)"] = "队伍",
     ["Groups (tab)"] = "常用组",
     ["Size:"] = "人数：",

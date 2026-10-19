@@ -4742,6 +4742,7 @@ do
     ghost.icon = ghost:CreateTexture(nil, "ARTWORK"); ghost.icon:SetAllPoints()
     ghost.text = ghost:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(ghost.text, 13)
     ghost.text:SetPoint("TOP", ghost, "BOTTOM", 0, -2)
+    C1.ghost = ghost  -- DCUI3C3: the raid drag uses it too
     C1.Border = function(on)
         if on then col4:SetBackdropBorderColor(1, 0.82, 0, 1) else col4:SetBackdropBorderColor(0.20, 0.22, 0.28, 0.9) end
     end
@@ -4921,6 +4922,7 @@ do
 
     function C2.SetActive(on)
         C2.active = on
+        if shell.c3 and shell.c3.bar then if on then shell.c3.bar:Hide() else shell.c3.bar:Show() end end  -- DCUI3C3
         if on then tabGroups:LockHighlight(); tabParty:UnlockHighlight() else tabParty:LockHighlight(); tabGroups:UnlockHighlight() end
         if on then
             for _, r in ipairs(prow) do r:Hide() end
@@ -5165,6 +5167,157 @@ do
     DCLoc.OnChange(function() C2.Render() end)
     end)()
 
+    -- ------------------------------------------------------------ party tools (RebornWOW DCUI3C3)
+    -- Design doc §16.4/16.5: a bar at the bottom of the party tab -- Fill up (the server
+    -- picks free online bots near your level by missing role), Disband, My bots log out --
+    -- and, in a raid, drag a member onto someone in another subgroup to move it there
+    -- (swap when that subgroup is full). Own function + a table on the shell.
+    shell.c3 = {}
+    ;(function()
+    local C3, C1 = shell.c3, shell.c1
+    local function Say(m) DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC]|r " .. m) end
+    local function MemberNames()
+        local list, me = {}, UnitName("player")
+        local n = GetNumRaidMembers()
+        if n > 0 then
+            for i = 1, n do local name = GetRaidRosterInfo(i); if name and name ~= me then list[#list + 1] = name end end
+        else
+            for i = 1, 4 do local name = UnitName("party" .. i); if name then list[#list + 1] = name end end
+        end
+        return list
+    end
+
+    local bar = CreateFrame("Frame", nil, col4)
+    bar:SetPoint("BOTTOMLEFT", col4, "BOTTOMLEFT", 8, 8); bar:SetPoint("BOTTOMRIGHT", col4, "BOTTOMRIGHT", -8, 8)
+    bar:SetHeight(22)
+    C3.bar = bar
+    local bFill = SmallButton(bar, "Fill up", 64); bFill:SetPoint("LEFT", bar, "LEFT", 0, 0)
+    local bDisband = SmallButton(bar, "Disband", 80); bDisband:SetPoint("LEFT", bFill, "RIGHT", 4, 0)
+    local bLogout = SmallButton(bar, "My bots log out", 104); bLogout:SetPoint("LEFT", bDisband, "RIGHT", 4, 0)
+    local function Tip(b, line1, line2)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:AddLine(DCL(line1))
+            GameTooltip:AddLine(DCL(line2), 1, 1, 1, true); GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    Tip(bFill, "Fill up", "Invite free online bots of your faction near your level, by the roles the group is missing (tank / healer / DPS).")
+    Tip(bDisband, "Disband", "Remove everyone from the group (you must be the leader).")
+    Tip(bLogout, "My bots log out", "Log out every character of your own account that is in the group.")
+
+    -- confirm popup shared by Disband / Log out
+    StaticPopupDialogs["DUNGEONCLEAR_PARTY_CONFIRM"] = {
+        text = "%s", button1 = YES, button2 = NO,
+        OnAccept = function() local f = C3.pendingAction; C3.pendingAction = nil; if f then f() end end,
+        timeout = 0, whileDead = 1, hideOnEscape = 1,
+    }
+    local function Confirm(text, f) C3.pendingAction = f; StaticPopup_Show("DUNGEONCLEAR_PARTY_CONFIRM", text) end
+
+    bDisband:SetScript("OnClick", function()
+        local names = MemberNames()
+        if #names == 0 then Say(DCL("You are not in a group.")); return end
+        if not C1.IsLeader() then
+            Confirm(DCL("You are not the leader. Leave the group?"), function() LeaveParty() end)
+            return
+        end
+        Confirm(string.format(DCL("Disband the group (remove %d)?"), #names), function()
+            for _, n in ipairs(MemberNames()) do UninviteUnit(n) end
+        end)
+    end)
+    bLogout:SetScript("OnClick", function()
+        local mine = {}
+        for _, n in ipairs(MemberNames()) do if C1.myChars[n] then mine[#mine + 1] = n end end
+        if #mine == 0 then Say(DCL("None of your own characters are in the group.")); return end
+        Confirm(string.format(DCL("Log out your own characters in the group (%d)?"), #mine), function()
+            for _, n in ipairs(mine) do Chat(".playerbot bot remove " .. n) end
+        end)
+    end)
+
+    -- Fill up: choose the size, ask the server, invite what comes back
+    local qf = CreateFrame("Frame"); qf:Hide()
+    local qacc = 0
+    bFill:SetScript("OnClick", function()
+        local have = math.max(1, GetNumRaidMembers() > 0 and GetNumRaidMembers() or (GetNumPartyMembers() + 1))
+        local menu = { { text = DCL("Fill the group to:"), isTitle = true, notCheckable = true } }
+        for _, n in ipairs({ 5, 10, 20, 25, 40 }) do
+            menu[#menu + 1] = { text = string.format(DCL("%d players"), n), notCheckable = true, disabled = n <= have,
+                                func = function()
+                                    C3.fill = { size = n, names = {} }
+                                    SendDcCommand("fill", tostring(n), true)
+                                    Say(DCL("Looking for online bots..."))
+                                end }
+        end
+        menu[#menu + 1] = { text = CANCEL, notCheckable = true, func = function() CloseDropDownMenus() end }
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
+    end)
+    function C3.OnFill(msg)
+        local f = C3.fill
+        if not f then return end
+        local kind, a, b = strsplit("\t", msg)
+        if kind == "FILL" then
+            if a and a ~= "" then f.names[#f.names + 1] = a end
+        elseif kind == "FILL_END" then
+            local need = tonumber(b) or 0
+            if need == 0 then Say(DCL("The group is already that size.")); C3.fill = nil; return end
+            if #f.names == 0 then Say(DCL("No free online bots near your level.")); C3.fill = nil; return end
+            Say(string.format(DCL("Found %d of %d needed; inviting..."), #f.names, need))
+            f.queue = f.names
+            qacc = 0
+            qf:Show()
+        end
+    end
+    qf:SetScript("OnUpdate", function(self, elapsed)
+        qacc = qacc + (elapsed or 0)
+        if qacc < 0.6 then return end
+        qacc = 0
+        local f = C3.fill
+        if not (f and f.queue) then self:Hide(); return end
+        local name = f.queue[1]
+        if not name then C3.fill = nil; self:Hide(); return end
+        if f.size > 5 and GetNumRaidMembers() == 0 and GetNumPartyMembers() >= 4 and IsPartyLeader() then
+            ConvertToRaid()
+            return
+        end
+        table.remove(f.queue, 1)
+        InviteUnit(name)
+    end)
+
+    -- raid: drag a member onto someone in another subgroup
+    for _, r in ipairs(rrow) do
+        r:RegisterForDrag("LeftButton")
+        r:SetScript("OnDragStart", function(self)
+            local ri = self.unit and tonumber(self.unit:match("^raid(%d+)$") or "")
+            if not ri or not C1.IsLeader() then return end
+            local name, _, _, _, _, token = GetRaidRosterInfo(ri)
+            C3.drag = ri
+            GameTooltip:Hide()
+            SetClassIcon(C1.ghost.icon, token)
+            C1.ghost.text:SetText(ClassHex(token) .. (name or "?") .. "|r")
+            C1.ghost.over = nil
+            C1.ghost:Show()
+        end)
+        r:SetScript("OnDragStop", function()
+            local ri = C3.drag
+            C3.drag = nil
+            C1.ghost:Hide(); C1.Border(false)
+            if not ri then return end
+            for _, t in ipairs(rrow) do
+                local tj = t:IsShown() and t.unit and MouseIsOver(t) and tonumber(t.unit:match("^raid(%d+)$") or "")
+                if tj and tj ~= ri then
+                    local _, _, subI = GetRaidRosterInfo(ri)
+                    local _, _, subJ = GetRaidRosterInfo(tj)
+                    if subI and subJ and subI ~= subJ then
+                        local count = 0
+                        for i = 1, GetNumRaidMembers() do local _, _, s = GetRaidRosterInfo(i); if s == subJ then count = count + 1 end end
+                        if count >= 5 then SwapRaidSubgroup(ri, tj) else SetRaidSubgroup(ri, subJ) end
+                    end
+                    return
+                end
+            end
+        end)
+    end
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
@@ -5178,6 +5331,7 @@ do
         if prefix ~= "DC" or type(msg) ~= "string" then return end
         local kind = msg:match("^([^\t]+)")
         if (kind == "BI" or kind == "BI_END") and shell.c2 and shell.c2.OnBI then shell.c2.OnBI(kind, msg) end  -- DCUI3C2
+        if (kind == "FILL" or kind == "FILL_END") and shell.c3 and shell.c3.OnFill then shell.c3.OnFill(msg) end  -- DCUI3C3
         if kind == "DL_START" then dlPending = {}
         elseif kind == "DL" and dlPending then
             local _, mapId, raid, sizes, level, rec, heroic, exp, name, tokens, x, y, z = strsplit("\t", msg)
