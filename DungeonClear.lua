@@ -5347,6 +5347,236 @@ do
     end
     end)()
 
+    -- ------------------------------------------------------------ dungeon runs (RebornWOW DCRUN1A)
+    -- Design doc §13: column 2 lists your own dungeon-clear runs (server DcPlayerRuns:
+    -- the last 20 per character; this addon keeps up to 50 per character so they survive
+    -- a server restart). Each row: [tier] dungeon (heroic), result, bosses, deaths, time,
+    -- date. Right-click: run it again (the continuous-clear queue resets the dungeon and
+    -- starts again), run stats, delete. Asked for every 15 s while the column is shown.
+    -- Own function + a table on the shell (the main chunk's 200-local limit).
+    shell.runs = {}
+    ;(function()
+    local R = shell.runs
+    local function Say(m) DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC]|r " .. m) end
+    local TIER = { normal = { "Normal", "|cffcccccc" }, story = { "Story", "|cff3da6ff" },
+                   casual = { "Casual", "|cff00ff00" }, speed = { "Speed", "|cffff6600" } }
+    local RESULT = { clear = { "Cleared", "|cff40ff40" }, stop = { "Stopped", "|cffaaaaaa" }, wipe = { "Wiped", "|cffff5050" },
+                     death = { "Stopped after deaths", "|cffff9933" }, left = { "Left the dungeon", "|cffaaaaaa" },
+                     ["end"] = { "Ended", "|cffaaaaaa" }, running = { "In progress", "|cffffd100" } }
+    local KIND = { a = "your account", b = "playerbot", n = "NPCBot", p = "real player" }
+    local MAX_KEEP = 50
+
+    local function Store()
+        DungeonClearDB.myRuns = DungeonClearDB.myRuns or {}
+        local me = UnitName("player") or "?"
+        DungeonClearDB.myRuns[me] = DungeonClearDB.myRuns[me] or { list = {}, deleted = {} }
+        return DungeonClearDB.myRuns[me]
+    end
+    local function Dur(sec)
+        sec = tonumber(sec) or 0
+        local h, m, s = math.floor(sec / 3600), math.floor(sec % 3600 / 60), sec % 60
+        if h > 0 then return string.format("%d:%02d:%02d", h, m, s) end
+        return string.format("%d:%02d", m, s)
+    end
+    local function Date(t)
+        local ok, s = pcall(date, "%m-%d %H:%M", tonumber(t) or 0)
+        return ok and s or ""
+    end
+
+    runsNote:Hide()
+    local emptyNote = col2:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); Crisp(emptyNote, 13)
+    emptyNote:SetPoint("TOPLEFT", col2.title, "BOTTOMLEFT", 0, -14)
+    emptyNote:SetPoint("RIGHT", col2, "RIGHT", -12, 0)
+    emptyNote:SetJustifyH("LEFT")
+    emptyNote:SetTextColor(0.82, 0.85, 0.90)
+    local ROWS, RH = 14, 42
+    local rows, offset = {}, 0
+    for i = 1, ROWS do
+        local r = Row(col2, RH - 3)
+        r:SetPoint("TOPLEFT", col2, "TOPLEFT", 8, -38 - (i - 1) * RH)
+        r:SetPoint("RIGHT", col2, "RIGHT", -8, 0)
+        r.l1 = r:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(r.l1, 13)
+        r.l1:SetPoint("TOPLEFT", r, "TOPLEFT", 5, -4); r.l1:SetPoint("RIGHT", r, "RIGHT", -60, 0); r.l1:SetJustifyH("LEFT")
+        r.res = r:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(r.res, 13)
+        r.res:SetPoint("TOPRIGHT", r, "TOPRIGHT", -5, -4)
+        r.l2 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.l2, 12)
+        r.l2:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 5, 4); r.l2:SetPoint("RIGHT", r, "RIGHT", -5, 0); r.l2:SetJustifyH("LEFT")
+        r:Hide()
+        rows[i] = r
+    end
+
+    function R.Render()
+        local list = Store().list
+        emptyNote:SetText(#list == 0 and DCL("No runs yet. Start dungeon clear with your party; when the run ends (cleared, stopped or wiped) it is listed here.") or "")
+        offset = math.max(0, math.min(offset, #list - ROWS))
+        for i, r in ipairs(rows) do
+            local d = list[i + offset]
+            r.d = d
+            if not d then r:Hide() else
+                local t = TIER[d.tier] or TIER.normal
+                local res = RESULT[d.result] or RESULT["end"]
+                r.l1:SetText(t[2] .. "[" .. DCL(t[1]) .. "]|r " .. DCLDungeon(d.name)
+                             .. (d.heroic and (" |cffff8000" .. DCL("(Heroic)") .. "|r") or ""))
+                r.res:SetText(res[2] .. DCL(res[1]) .. "|r")
+                r.l2:SetText(string.format("%s %d/%d   %s %d   %s %s   |cff999999%s|r", DCL("Bosses"), d.bosses or 0,
+                    d.total or 0, DCL("Deaths"), d.deaths or 0, DCL("Time"), Dur(d.dur), Date(d.start)))
+                r:Show()
+            end
+        end
+    end
+
+    -- server replies: MR rows (upserted by id), MRX detail -> the stats window
+    local pendingDetail = {}
+    function R.OnMsg(kind, msg)
+        if kind == "MR" then
+            local _, id, mapId, heroic, start, dur, result, bosses, total, deaths, tier, token, name = strsplit("\t", msg)
+            local st = Store()
+            if not id or st.deleted[id] then return end
+            local row = { id = id, map = tonumber(mapId) or 0, heroic = heroic == "1", start = tonumber(start) or 0,
+                          dur = tonumber(dur) or 0, result = result, bosses = tonumber(bosses) or 0,
+                          total = tonumber(total) or 0, deaths = tonumber(deaths) or 0, tier = tier,
+                          token = (token ~= "-") and token or nil, name = name or "?" }
+            local found
+            for i, x in ipairs(st.list) do if x.id == id then st.list[i] = row; found = true; break end end
+            if not found then table.insert(st.list, row) end
+            table.sort(st.list, function(a, b) return (a.start or 0) > (b.start or 0) end)
+            while #st.list > MAX_KEEP do table.remove(st.list) end
+        elseif kind == "MR_END" then
+            R.Render()
+        elseif kind == "MRX" then
+            local _, id, what, a, b, c, d = strsplit("\t", msg)
+            local det = pendingDetail[id]
+            if not det then det = { members = {}, bosses = {}, deaths = {} }; pendingDetail[id] = det end
+            if what == "R" then det.reason = a
+            elseif what == "S" then det.restarts = tonumber(a) or 0
+            elseif what == "M" then det.members[#det.members + 1] = { name = a, cls = tonumber(b) or 0, level = tonumber(c) or 0, kind = d }
+            elseif what == "B" then det.bosses[#det.bosses + 1] = { t = tonumber(a) or 0, name = b }
+            elseif what == "D" then det.deaths[#det.deaths + 1] = { t = tonumber(a) or 0, name = b } end
+        elseif kind == "MRX_END" then
+            local id = msg:match("^MRX_END\t(.*)$")
+            local det = pendingDetail[id]
+            pendingDetail[id] = nil
+            if id and id == R.wantDetail then R.wantDetail = nil; R.ShowStats(id, det) end
+        end
+    end
+
+    -- the stats window
+    local sf
+    function R.ShowStats(id, det)
+        local d
+        for _, x in ipairs(Store().list) do if x.id == id then d = x end end
+        if not d then return end
+        if not sf then
+            sf = CreateFrame("Frame", "DungeonClearRunStatsFrame", UIParent)
+            sf:SetSize(400, 480); sf:SetPoint("CENTER"); sf:SetFrameStrata("DIALOG")
+            sf:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                             tile = true, tileSize = 12, edgeSize = 14, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+            sf:SetBackdropColor(0.03, 0.04, 0.06, 0.95); sf:SetBackdropBorderColor(0.42, 0.36, 0.22, 1)
+            sf:EnableMouse(true); sf:SetMovable(true); sf:RegisterForDrag("LeftButton")
+            sf:SetScript("OnDragStart", sf.StartMoving); sf:SetScript("OnDragStop", sf.StopMovingOrSizing)
+            local close = CreateFrame("Button", nil, sf, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", -2, -2)
+            sf.title = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); sf.title:SetPoint("TOPLEFT", 14, -12)
+            sf.title:SetPoint("RIGHT", sf, "RIGHT", -34, 0); sf.title:SetJustifyH("LEFT")
+            sf.body = sf:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); Crisp(sf.body, 12)
+            sf.body:SetPoint("TOPLEFT", 14, -40); sf.body:SetPoint("RIGHT", sf, "RIGHT", -14, 0)
+            sf.body:SetJustifyH("LEFT"); sf.body:SetJustifyV("TOP")
+            tinsert(UISpecialFrames, "DungeonClearRunStatsFrame")
+        end
+        det = det or { members = {}, bosses = {}, deaths = {} }
+        local res = RESULT[d.result] or RESULT["end"]
+        local t = TIER[d.tier] or TIER.normal
+        sf.title:SetText(DCLDungeon(d.name) .. (d.heroic and (" " .. DCL("(Heroic)")) or ""))
+        local L = {}
+        local function add(s) L[#L + 1] = s end
+        add(string.format("|cffffd100%s|r %s%s|r   |cffffd100%s|r %s%s|r", DCL("Result"), res[2], DCL(res[1]), DCL("Cheat tier"), t[2], DCL(t[1])))
+        if det.reason and det.reason ~= "" then add("|cffffd100" .. DCL("Reason") .. "|r " .. DCLDetail(det.reason)) end
+        add(string.format("|cffffd100%s|r %s   |cffffd100%s|r %s   |cffffd100%s|r %d", DCL("Started"), Date(d.start),
+            DCL("Time"), Dur(d.dur), DCL("Restarts"), det.restarts or 0))
+        add("")
+        add(string.format("|cff3da6ff%s %d/%d|r", DCL("Boss kills"), #det.bosses, d.total or 0))
+        for _, e in ipairs(det.bosses) do add("  " .. Dur(e.t) .. "  " .. e.name) end
+        add("")
+        add(string.format("|cff3da6ff%s %d|r", DCL("Deaths"), #det.deaths))
+        for i, e in ipairs(det.deaths) do
+            if i > 12 then add("  " .. string.format(DCL("and %d more"), #det.deaths - 12)); break end
+            add("  " .. Dur(e.t) .. "  " .. e.name)
+        end
+        add("")
+        add(string.format("|cff3da6ff%s %d|r", DCL("Members"), #det.members))
+        for i, m in ipairs(det.members) do
+            if i > 12 then add("  " .. string.format(DCL("and %d more"), #det.members - 12)); break end
+            local token = CLASS_BY_ID[m.cls]
+            add(string.format("  %s%s|r  %s %d  |cff999999%s|r", ClassHex(token), m.name, DCL("Lv"), m.level, DCL(KIND[m.kind] or "real player")))
+        end
+        sf.body:SetText(table.concat(L, "\n"))
+        sf:Show()
+    end
+
+    -- right-click menu
+    StaticPopupDialogs["DUNGEONCLEAR_RUNS_DELETE_ALL"] = {
+        text = "%s", button1 = YES, button2 = NO,
+        OnAccept = function()
+            local st = Store()
+            for _, x in ipairs(st.list) do st.deleted[x.id] = true end
+            st.list = {}
+            SendDcCommand("myrundel", "all", true)
+            R.Render()
+        end,
+        timeout = 0, whileDead = 1, hideOnEscape = 1,
+    }
+    local function Menu(d)
+        local menu = { { text = DCLDungeon(d.name), isTitle = true, notCheckable = true } }
+        local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
+        add({ text = DCL("Run it again"), func = function()
+            if not d.token then Say(DCL("This dungeon has no dungeon-clear route.")); return end
+            SendDcCommand("queue", "start\t" .. d.token, true)
+            Say(DCL("Queued: the dungeon is reset and the clear starts again."))
+        end })
+        add({ text = DCL("Run stats"), func = function()
+            R.wantDetail = d.id
+            SendDcCommand("myrun", d.id, true)
+            R.ShowStats(d.id, nil)   -- open now with the summary; the detail fills in on reply
+            R.wantDetail = d.id
+        end })
+        add({ text = DCL("Delete this run"), func = function()
+            local st = Store()
+            st.deleted[d.id] = true
+            for i, x in ipairs(st.list) do if x.id == d.id then table.remove(st.list, i); break end end
+            SendDcCommand("myrundel", d.id, true)
+            R.Render()
+        end })
+        add({ text = "|cffff5050" .. DCL("Delete all runs") .. "|r", func = function()
+            StaticPopup_Show("DUNGEONCLEAR_RUNS_DELETE_ALL", DCL("Delete all your dungeon runs?"))
+        end })
+        add({ text = CANCEL, func = function() CloseDropDownMenus() end })
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
+    end
+    for _, r in ipairs(rows) do
+        r:SetScript("OnClick", function(self, button) if button == "RightButton" and self.d then Menu(self.d) end end)
+        r:SetScript("OnEnter", function(self)
+            if not self.d then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(DCLDungeon(self.d.name))
+            GameTooltip:AddLine(DCL("Right-click: run again / stats / delete"), 0.7, 0.7, 0.7)
+            GameTooltip:Show()
+        end)
+        r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    col2:SetScript("OnMouseWheel", function(_, delta) offset = offset - delta * 3; R.Render() end)
+
+    -- ask every 15 s while the column is shown (the first time right away)
+    local poll = CreateFrame("Frame", nil, col2)
+    local acc = 15
+    poll:SetScript("OnUpdate", function(_, elapsed)
+        acc = acc + (elapsed or 0)
+        if acc < 15 then return end
+        acc = 0
+        SendDcCommand("myruns", "", true)
+    end)
+    R.Render()
+    DCLoc.OnChange(function() R.Render() end)
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
@@ -5361,6 +5591,7 @@ do
         local kind = msg:match("^([^\t]+)")
         if (kind == "BI" or kind == "BI_END") and shell.c2 and shell.c2.OnBI then shell.c2.OnBI(kind, msg) end  -- DCUI3C2
         if (kind == "FILL" or kind == "FILL_END") and shell.c3 and shell.c3.OnFill then shell.c3.OnFill(msg) end  -- DCUI3C3
+        if kind and kind:sub(1, 2) == "MR" and shell.runs and shell.runs.OnMsg then shell.runs.OnMsg(kind, msg) end  -- DCRUN1A
         if kind == "DL_START" then dlPending = {}
         elseif kind == "DL" and dlPending then
             local _, mapId, raid, sizes, level, rec, heroic, exp, name, tokens, x, y, z = strsplit("\t", msg)
