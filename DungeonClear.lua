@@ -4998,6 +4998,9 @@ do
 
     function C2.Render()
         if not C2.active then return end
+        -- RebornWOW DCUI3D3: an open group the size / owner filter hides is closed, so a
+        -- drop never lands in a group the player cannot see
+        if C2.open and not (C2.open.size == C2.size and C2.Visible(C2.open)) then C2.open = nil end
         for _, n in ipairs(SIZES) do if n == C2.size then sizeBtn[n]:LockHighlight() else sizeBtn[n]:UnlockHighlight() end end
         local disp = {}
         for _, g in ipairs(Groups()) do
@@ -5081,7 +5084,16 @@ do
         C2.Render()
     end
     function C2.Drop(d)
-        if not C2.open then Say(DCL("Open a favourite group first (click its name), then drop characters on it.")); return end
+        -- RebornWOW DCUI3D3: no shown open group -> a new group of the size on screen
+        if C2.open and not (C2.open.size == C2.size and C2.Visible(C2.open)) then C2.open = nil end
+        if not C2.open then
+            local g = { name = string.format(DCL("Favourite group %d"), #Groups() + 1), size = C2.size, members = {},
+                        owner = UnitName("player") }
+            table.insert(Groups(), g)
+            C2.open = g
+            Say(string.format(DCL("New %d-player favourite group %s: drag more characters in; right-click its name to rename it."),
+                g.size, g.name))
+        end
         C2.AddMember(C2.open, d.name, CLASS_BY_ID[d.cls], d.level)
     end
     local function CurrentMembers()

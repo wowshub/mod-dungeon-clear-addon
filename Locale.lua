@@ -328,6 +328,8 @@ local zh = {
     -- DCSB2A
     -- DCUI3D1
     -- DCUI3D2
+    -- DCUI3D3
+    ["New %d-player favourite group %s: drag more characters in; right-click its name to rename it."] = "已新建 %d 人常用组 %s：继续把角色拖进来；右键组名可以改名。",
     ["Run (card)"] = "运行",
     ["Strategy (card)"] = "策略",
     ["Normal dungeon"] = "普通",
