@@ -2636,8 +2636,11 @@ end
             for _, h in ipairs(info.hstats) do
                 lines[#lines + 1] = "  " .. string.format(DCL("%s: %d s in combat, moving %d s, casting %d s; ally below half health %d s (moving %d s, idle %d s); lowest mana %d%%"),
                     h.name, h.combat, h.moving, h.casting, h.low, h.lowMoving, h.lowIdle, h.minMana)
-                if h.casts and h.casts ~= "" then  -- DCBOSS1C
-                    lines[#lines + 1] = "      |cff999999" .. DCL("Cast check while idle") .. ": " .. h.casts .. "|r"
+                if h.castList and #h.castList > 0 then  -- DCBOSS1C / 1D
+                    lines[#lines + 1] = "      |cff999999" .. DCL("Cast check while idle") .. ":|r"
+                    for _, c in ipairs(h.castList) do
+                        lines[#lines + 1] = "        |cff999999" .. c.secs .. " s  " .. c.text .. "|r"
+                    end
                 end
             end
         end
@@ -3201,6 +3204,13 @@ end
                 moving = tonumber(parts[4]) or 0, casting = tonumber(parts[5]) or 0, low = tonumber(parts[6]) or 0,
                 lowMoving = tonumber(parts[7]) or 0, lowIdle = tonumber(parts[8]) or 0, minMana = tonumber(parts[9]) or 100,
                 casts = (parts[10] ~= nil and parts[10] ~= "-") and parts[10] or "" }  -- DCBOSS1C
+        elseif kind == "TIY" and infoPending then  -- DCBOSS1D: one cast-check answer for a healer
+            for _, h in ipairs(infoPending.hstats or {}) do
+                if h.name == (parts[2] or "") then
+                    h.castList = h.castList or {}
+                    h.castList[#h.castList + 1] = { secs = tonumber(parts[3]) or 0, text = parts[4] or "" }
+                end
+            end
         elseif kind == "TIH" and infoPending then  -- DCBOSS1A: healing by healer
             infoPending.heals = infoPending.heals or {}
             infoPending.heals[#infoPending.heals + 1] = { name = parts[2] or "", total = tonumber(parts[3]) or 0 }
