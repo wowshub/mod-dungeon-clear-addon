@@ -3452,13 +3452,17 @@ end
         Hosted(false)         -- DCTEST9D: only now, after both are closed
         saved = nil
     end
-    -- Esc / a close button while docked: back to the Clear mode
-    -- DCUI4A2: judged one frame later -- CopySettings refreshes with Hide(); Show()
+    -- RebornWOW DCTEST9F: only the mode buttons change the mode. A docked test window that
+    -- got hidden (Esc, or anything else) is part of the panel: show it again a frame later
+    -- (a frame later, because CopySettings refreshes with Hide(); Show()).
     local later = CreateFrame("Frame")
     later:Hide()
     later:SetScript("OnUpdate", function(self)
         self:Hide()
-        if docked and not tf:IsShown() and DCShellSetMode then DCShellSetMode("clear") end
+        if docked and not tf:IsShown() then tf:Show(); lf:Show() end
+    end)
+    lf:HookScript("OnHide", function()
+        if docked then later:Show() end
     end)
     tf:HookScript("OnHide", function()
         if docked then later:Show() end
@@ -7289,7 +7293,12 @@ do
         local origAsk = DCShowSelfBotAsk
         local ROLE = { tank = "Tank", heal = "Heal", dps = "DPS" }
         DCShowSelfBotAsk = function(role, tank)
-            if Mode() == "test" and not DungeonClearDB.tinyMode and frame:IsShown() and DCTestDocked and DCTestDocked() then
+            -- DCTEST9F: by the current mode only, never switching it; Test mode opens the
+            -- panel (in Test mode) when it is closed or tiny
+            if Mode() == "test" then
+                if DungeonClearDB.tinyMode then DungeonClearDB.tinyMode = false; UpdateLayout() end
+                if not frame:IsShown() then frame:Show() end
+                if DCShellLayout and not (DCTestDocked and DCTestDocked()) then DCShellLayout() end
                 SendDcCommand("status", "addon")
                 t, left = 0, 120; glow:Show()
                 DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[DC] " .. string.format(DCL("Your party is running dungeon clear (tank: %s). Pick a role on the flashing Auto-play row of the panel and the AI plays your character with the party (suggested: %s); pick Manual to play yourself."),
