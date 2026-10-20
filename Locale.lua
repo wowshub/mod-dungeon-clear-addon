@@ -343,6 +343,9 @@ local zh = {
     -- DCGM1C3
     -- DCBOSS1A
     -- DCBOSS1B
+    -- DCBOSS1C
+    ["killer at %d%% health"] = "致死者血量 %d%%",
+    ["Cast check while idle"] = "闲置时的施法检查",
     ["Healers"] = "治疗者",
     ["Healer activity"] = "治疗者活动",
     ["%s: %d s in combat, moving %d s, casting %d s; ally below half health %d s (moving %d s, idle %d s); lowest mana %d%%"] = "%s：战斗 %d 秒，移动 %d 秒，读条 %d 秒；队友低于一半血 %d 秒（移动 %d 秒，闲置 %d 秒）；最低蓝量 %d%%",
