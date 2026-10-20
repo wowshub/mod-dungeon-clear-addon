@@ -338,6 +338,10 @@ local zh = {
     -- DCGM2A
     -- DCUI4A
     -- DCTEST9A
+    -- DCTEST10A
+    ["Mine"] = "我的",
+    ["Only the test runs this character started."] = "只显示当前角色开的测试。",
+    ["Every GM's test runs, and records from before runs were tagged with their GM."] = "所有 GM 的测试，以及还没有记录开测 GM 的旧记录。",
     ["Clear mode"] = "清本",
     ["Test mode"] = "测试",
     ["Field mode"] = "野外",

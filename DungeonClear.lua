@@ -2247,6 +2247,31 @@ end
     local lHint = LText(lf, "GameFontDisableSmall", "Drag to move; right-click a run or a bot for more", 0, 0)
     lHint:ClearAllPoints()
     lHint:SetPoint("LEFT", lTitle, "RIGHT", 10, -1)
+    -- RebornWOW DCTEST10A: whose runs the list shows
+    local scopeBtns = {}
+    local function PaintScope()
+        local all = DB().listScope == "all"
+        if all then scopeBtns.all:LockHighlight(); scopeBtns.mine:UnlockHighlight()
+        else scopeBtns.mine:LockHighlight(); scopeBtns.all:UnlockHighlight() end
+    end
+    for i, def in ipairs({ { "mine", "Mine", "Only the test runs this character started." },
+                           { "all", "All", "Every GM's test runs, and records from before runs were tagged with their GM." } }) do
+        local b = LButton(lf, def[2], 46, function()
+            DB().listScope = (def[1] == "all") and "all" or nil
+            PaintScope()
+            if RenderRuns then RenderRuns() end
+        end)
+        if i == 1 then b:SetPoint("LEFT", lTitle, "RIGHT", 10, 0) else b:SetPoint("LEFT", scopeBtns.mine, "RIGHT", 2, 0) end
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText(DCL(def[2]))
+            GameTooltip:AddLine(DCL(def[3]), 1, 1, 1, true); GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        scopeBtns[def[1]] = b
+    end
+    lHint:ClearAllPoints()
+    lHint:SetPoint("LEFT", scopeBtns.all, "RIGHT", 8, 0)
+    PaintScope()
     local lRefresh = LButton(lf, "Refresh", 64, function() SendDcCommand("testruns", "", true) end)
     lRefresh:SetPoint("TOPRIGHT", lf, "TOPRIGHT", -14, -34)
 
@@ -2941,12 +2966,19 @@ end
         end
         -- DCTEST6A: live runs first, then the finished ones (newest first).
         local shown = {}
-        for _, r in ipairs(runs) do shown[#shown + 1] = r end
-        for _, h in ipairs((History())) do shown[#shown + 1] = h end
+        -- RebornWOW DCTEST10A: [Mine] = runs this character started; [All] = everyone's
+        local me, all = UnitName("player"), DB().listScope == "all"
+        local liveShown = 0
+        for _, r in ipairs(runs) do
+            if all or r.gm == me then shown[#shown + 1] = r; liveShown = liveShown + 1 end
+        end
+        for _, h in ipairs((History())) do
+            if all or h.gm == me then shown[#shown + 1] = h end
+        end
         shownCount = #shown
-        local finCount = #shown - #runs
+        local finCount = #shown - liveShown
         lCount:SetWidth(196)
-        lCount:SetText(DCL("Running:") .. " " .. #runs .. capText ..
+        lCount:SetText(DCL("Running:") .. " " .. liveShown .. capText ..
             (finCount > 0 and ("  |cff999999" .. DCL("Finished") .. " " .. finCount .. "|r") or ""))
         local found = false
         for _, r in ipairs(shown) do if r.id == selectedRun then found = true end end
@@ -3042,6 +3074,7 @@ end
                 stage = parts[5], elapsed = tonumber(parts[6]) or 0, killed = tonumber(parts[7]) or 0,
                 total = tonumber(parts[8]) or 0, watching = parts[9] == "1", wiped = parts[10] == "1",
                 combat = parts[11] == "1", level = tonumber(parts[12]) or 0, members = {},
+                gm = (parts[13] and parts[13] ~= "-") and parts[13] or nil,  -- DCTEST10A
             }
         elseif kind == "TRS" and pending then
             for _, r in ipairs(pending) do
@@ -3099,6 +3132,7 @@ end
                 level = tonumber(parts[12]) or 0, seed = tonumber(parts[13]) or 0, gearIlvl = tonumber(parts[14]) or 0,
                 gearQuality = tonumber(parts[15]) or 0, roster = parts[16] == "1", comp = {},
                 tier = parts[17] or "",  -- DCGM1B2
+                gm = (parts[18] and parts[18] ~= "-") and parts[18] or nil,  -- DCTEST10A
             }
         elseif kind == "TRFC" and finPending then
             for _, f in ipairs(finPending) do
@@ -3129,7 +3163,7 @@ end
                         level = old.level, seed = old.seed, gearIlvl = old.gearIlvl, gearQuality = old.gearQuality,
                         roster = old.roster, comp = old.comp, killed = old.killed, total = old.total, tier = old.tier,
                         deaths = old.deaths, pulls = old.pulls, elapsed = old.elapsed, members = mem,
-                        result = "", endedAt = time() })
+                        result = "", endedAt = time(), gm = old.gm })  -- gm: DCTEST10A
                 end
             end
             for i = #(finPending or {}), 1, -1 do
@@ -3142,7 +3176,7 @@ end
                     end
                     for _, k in ipairs({ "token", "heroic", "result", "elapsed", "killed", "total", "deaths", "regroups",
                                          "cheats", "level", "seed", "gearIlvl", "gearQuality", "roster", "endedAt", "reason",
-                                         "tier" }) do
+                                         "tier", "gm" }) do  -- gm: DCTEST10A
                         if f[k] ~= nil then h[k] = f[k] end
                     end
                     if #f.comp > 0 then h.comp = f.comp end
@@ -3312,6 +3346,7 @@ end
         if docked then return end
         docked = true
         Hosted(true)          -- DCTEST9D: before anything moves
+        lHint:Hide()          -- DCTEST10A: room for [Mine] [All]
         listBtn:Hide()        -- DCTEST9D: the list is always shown in Test mode
         saved = { tf = {}, lf = {}, moved = {} }
         for key, f in pairs({ tf = tf, lf = lf }) do
@@ -3449,6 +3484,7 @@ end
         lf:Hide()
         tf:Hide()                            -- leaving Test mode closes the test windows
         listBtn:Show()
+        lHint:Show()          -- DCTEST10A
         Hosted(false)         -- DCTEST9D: only now, after both are closed
         saved = nil
     end
