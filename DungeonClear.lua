@@ -4684,7 +4684,10 @@ do
     shell:SetFrameLevel(math.max(0, frame:GetFrameLevel() - 1))
     -- RebornWOW DCUI4B2: the small panel is the centre column alone
     function shell.IsSmall() return DungeonClearDB.panelSize == "small" end
-    function shell.Width() return shell.IsSmall() and (WC + PAD * 2) or SHELL_W end
+    -- DCUI4B3: Clear and Test share one small size (the test window's 372 + margins = 392); the
+    -- 330 Clear window sits in the middle of it. CentreX = where the centre window's left edge is.
+    function shell.Width() return shell.IsSmall() and 392 or SHELL_W end
+    function shell.CentreX() return shell.IsSmall() and math.floor((392 - WC) / 2) or CENTRE_X end
     shell:EnableMouse(true)  -- clicks on the shell drag the window like its own body
     shell:RegisterForDrag("LeftButton")
     shell:SetScript("OnDragStart", function() if frame:GetScript("OnDragStart") then frame:GetScript("OnDragStart")(frame) end end)
@@ -7466,8 +7469,8 @@ do
             local h = shell:GetHeight() or SHELL_H
             -- RebornWOW DCUI4B2: the small Test panel is the test window alone
             local single = shell.IsSmall()
-            local tw = single and (PAD * 2 + TC) or TEST_W
-            local cx = single and PAD or CENTRE_X
+            local tw = single and shell.Width() or TEST_W
+            local cx = shell.CentreX()  -- DCUI4B3
             -- switching big <-> small while docked: dock again the other way
             if DCTestDocked and DCTestDocked() and DCTestDockedSingle and DCTestDockedSingle() ~= single then DCTestUndock() end
             shell:SetWidth(tw)
@@ -7776,7 +7779,7 @@ do
         if l and t then
             local k = eff / frame:GetEffectiveScale()
             frame:ClearAllPoints()
-            frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l * k + CENTRE_X, t * k - PAD - 40)  -- DCUI3D1: top bar
+            frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", l * k + shell.CentreX(), t * k - PAD - 40)  -- DCUI3D1: top bar; DCUI4B3: the shell's own offset
         end
     end
     local function SavePosition()
@@ -7883,7 +7886,7 @@ do
         local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2 + 40)
         local small = shell.IsSmall()                       -- RebornWOW DCUI4B2
         local SW = shell.Width()
-        local CX = small and PAD or CENTRE_X
+        local CX = shell.CentreX()  -- DCUI4B3
         shell:ClearAllPoints()
         shell:SetPoint("TOPLEFT", frame, "TOPLEFT", -CX, PAD + 40)
         shell:SetSize(SW, h)
