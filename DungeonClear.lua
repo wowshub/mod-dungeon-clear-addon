@@ -1555,9 +1555,14 @@ end
         return b
     end
 
+    local editBoxCount = 0  -- DCTEST9A
     local function EditBox(w, numeric)
-        local e = CreateFrame("EditBox", nil, tf, "InputBoxTemplate")
+        editBoxCount = editBoxCount + 1
+        local e = CreateFrame("EditBox", "DungeonClearTestEdit" .. editBoxCount, tf, "InputBoxTemplate")
         e:SetSize(w, 20)
+        local back = e:CreateTexture(nil, "BACKGROUND")  -- DCTEST9A: readable over the painting
+        back:SetPoint("TOPLEFT", e, "TOPLEFT", -4, -1); back:SetPoint("BOTTOMRIGHT", e, "BOTTOMRIGHT", 0, 1)
+        back:SetTexture(0.02, 0.03, 0.05, 0.92)
         e:SetAutoFocus(false)
         if numeric then e:SetNumeric(true) end
         e:SetScript("OnEscapePressed", e.ClearFocus)
@@ -1570,6 +1575,11 @@ end
     out:SetPoint("BOTTOMLEFT", tf, "BOTTOMLEFT", 12, 12)
     out:SetPoint("BOTTOMRIGHT", tf, "BOTTOMRIGHT", -12, 12)
     out:SetHeight(150)
+    do  -- DCTEST9A: a dark backing for the server log (docked there is no window backdrop)
+        local back = tf:CreateTexture(nil, "BACKGROUND")
+        back:SetPoint("TOPLEFT", out, "TOPLEFT", -4, 4); back:SetPoint("BOTTOMRIGHT", out, "BOTTOMRIGHT", 4, -4)
+        back:SetTexture(0.02, 0.03, 0.05, 0.75)
+    end
     out:SetFontObject(GameFontHighlightSmall)
     out:SetJustifyH("LEFT")
     out:SetFading(false)
@@ -2166,7 +2176,7 @@ end
     local ROLE_TAGS = { tank = "Tank", healer = "Heal", heal = "Heal", dps = "DPS" }
 
     local lf = CreateFrame("Frame", "DungeonClearTestListFrame", UIParent)
-    lf:SetSize(392, 640)
+    lf:SetSize(392, 690)  -- DCTEST9A: taller party rows
     lf:SetFrameStrata("DIALOG")
     lf:EnableMouse(true)
     -- Its own window: opens left of the test window (the main panel usually sits on
@@ -2295,13 +2305,16 @@ end
 
     -- runs ---------------------------------------------------------------
     local RUN_ROWS, RUN_H = 5, 40
+    -- RebornWOW DCTEST9A: rows for the docked list (up to RUN_MAX); runVis are shown.
+    -- RUN_ROWS (5) still sets the floating window's layout below the list.
+    local RUN_MAX, runVis = 16, 5
     local runBox = Panel(lf, 10, -58, 372, RUN_ROWS * RUN_H + 8)
     local VIEW_H = 28  -- DCTEST4C: the camera row under the runs
     runBox:EnableMouseWheel(true)
     local runRows = {}
     local RenderRuns, RenderMembers, RenderGear  -- forward
 
-    for i = 1, RUN_ROWS do
+    for i = 1, RUN_MAX do
         local r = CreateFrame("Button", nil, runBox)
         r:SetSize(362, RUN_H - 2)
         r:SetPoint("TOPLEFT", runBox, "TOPLEFT", 5, -4 - (i - 1) * RUN_H)
@@ -2339,7 +2352,7 @@ end
         runRows[i] = r
     end
     runBox:SetScript("OnMouseWheel", function(_, delta)
-        runOffset = math.max(0, math.min(runOffset - delta, shownCount - RUN_ROWS))
+        runOffset = math.max(0, math.min(runOffset - delta, shownCount - runVis))  -- DCTEST9A
         RenderRuns()
     end)
 
@@ -2357,17 +2370,34 @@ end
     -- members --------------------------------------------------------------
     local memLabel = LText(lf, "GameFontNormal", nil, 14, -58 - RUN_ROWS * RUN_H - 16 - VIEW_H)
     memLabel:SetTextColor(0.24, 0.60, 1.0)
-    local MEM_ROWS, MEM_H = 5, 20
+    local MEM_ROWS, MEM_H = 5, 30  -- DCTEST9A: room for the bars
     local memBox = Panel(lf, 10, -58 - RUN_ROWS * RUN_H - 32 - VIEW_H, 372, MEM_ROWS * MEM_H + 8)
     local memRows = {}
-    for i = 1, MEM_ROWS do
+    -- RebornWOW DCTEST9A: rows for a 10/20-player party when docked; memVis are shown,
+    -- the wheel scrolls past them
+    local MEM_MAX, memVis, memOffset = 20, MEM_ROWS, 0
+    for i = 1, MEM_MAX do
         local r = CreateFrame("Frame", nil, memBox)
         r:SetSize(362, MEM_H)
         r:SetPoint("TOPLEFT", memBox, "TOPLEFT", 5, -4 - (i - 1) * MEM_H)
+        -- RebornWOW DCTEST9A: like the main panel's party -- role chip, icon, name, and a
+        -- health and a power bar along the bottom
+        r.chip = r:CreateTexture(nil, "ARTWORK"); r.chip:SetSize(22, 16); r.chip:SetPoint("TOPLEFT", r, "TOPLEFT", 1, -2)
+        r.chipText = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        r.chipText:SetPoint("CENTER", r.chip, "CENTER", 0, 0)
         r.cls = r:CreateTexture(nil, "ARTWORK")
         r.cls:SetSize(16, 16)
-        r.cls:SetPoint("LEFT", r, "LEFT", 1, 0)
+        r.cls:SetPoint("LEFT", r.chip, "RIGHT", 4, 0)
         r.cls:SetTexture("Interface\\TargetingFrame\\UI-Classes-Circles")
+        local function Bar(y, h)
+            local bg = r:CreateTexture(nil, "BORDER"); bg:SetTexture(0, 0, 0, 0.6)
+            bg:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 27, y); bg:SetSize(362 - 27 - 58, h)
+            local fg = r:CreateTexture(nil, "ARTWORK"); fg:SetHeight(h)
+            fg:SetPoint("BOTTOMLEFT", bg, "BOTTOMLEFT", 0, 0)
+            return bg, fg
+        end
+        r.hpBg, r.hp = Bar(5, 3)
+        r.pwBg, r.pw = Bar(1, 2)
         r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         r.text:SetPoint("LEFT", r.cls, "RIGHT", 4, 0)
         r.text:SetPoint("RIGHT", r, "RIGHT", -56, 0)
@@ -2817,8 +2847,9 @@ end
             return
         end
         memLabel:SetText(DCL("Party") .. ": " .. DungeonName(run.token) .. "  |cff999999" .. run.id .. "|r")
+        memOffset = math.max(0, math.min(memOffset, #run.members - memVis))  -- DCTEST9A
         for i, r in ipairs(memRows) do
-            local m = run.members[i]
+            local m = (i <= memVis) and run.members[i + memOffset] or nil
             r.member = m
             if m then
                 local token = CLASS_TOKENS[m.class]
@@ -2826,15 +2857,43 @@ end
                 if tc then r.cls:SetTexCoord(unpack(tc)); r.cls:Show() else r.cls:Hide() end
                 local cc = token and RAID_CLASS_COLORS and RAID_CLASS_COLORS[token]
                 local color = cc and string.format("|cff%02x%02x%02x", cc.r * 255, cc.g * 255, cc.b * 255) or "|cffcccccc"
-                local role = DCL(ROLE_TAGS[m.role] or m.role)
-                local hp = run.finished and "--" or (m.alive and (m.hp .. "%") or ("|cffff3333" .. DCL("dead") .. "|r"))
-                local mp = (m.mp >= 0) and ("  " .. DCL("MP") .. " " .. m.mp .. "%") or ""
-                local fight = m.combat and " |cffff6600*|r" or ""
+                -- DCTEST9A: role chip + bars instead of "HP 87%  MP 40%"
+                local CHIP = { tank = { "Tank (short)", 0.22, 0.40, 0.75, "T" }, healer = { "Healer (short)", 0.15, 0.52, 0.26, "H" },
+                               heal = { "Healer (short)", 0.15, 0.52, 0.26, "H" }, dps = { "DPS (chip)", 0.62, 0.30, 0.15, "D" } }
+                local chip = CHIP[m.role or ""] or CHIP.dps
+                r.chip:SetTexture(chip[2], chip[3], chip[4], 0.9)
+                local ct = DCL(chip[1]); r.chipText:SetText(ct ~= chip[1] and ct or chip[5])
+                local POWER = { [0] = { 0.20, 0.45, 1.00 }, [1] = { 0.90, 0.15, 0.15 }, [2] = { 1.00, 0.50, 0.25 },
+                                [3] = { 1.00, 0.85, 0.10 }, [6] = { 0.00, 0.82, 1.00 } }
+                local W = 362 - 27 - 58
+                local live = not run.finished and m.alive
+                if live then
+                    local f = math.max(0, math.min(1, (m.hp or 0) / 100))
+                    local c = f > 0.5 and { 0.15, 0.85, 0.25 } or (f > 0.25 and { 1, 0.75, 0.1 } or { 1, 0.2, 0.15 })
+                    r.hpBg:Show(); r.hp:SetTexture(c[1], c[2], c[3], 0.95); r.hp:SetWidth(math.max(1, W * f))
+                    if f > 0 then r.hp:Show() else r.hp:Hide() end
+                    local pt, pp = m.ptype, m.ppct
+                    if not pt and (m.mp or -1) >= 0 then pt, pp = 0, m.mp end  -- older server: mana only
+                    if pt and pt >= 0 and pp and pp >= 0 then
+                        local pc = POWER[pt] or POWER[0]
+                        r.pwBg:Show(); r.pw:SetTexture(pc[1], pc[2], pc[3], 0.95)
+                        r.pw:SetWidth(math.max(1, W * math.min(1, pp / 100)))
+                        if pp > 0 then r.pw:Show() else r.pw:Hide() end
+                    else
+                        r.pwBg:Hide(); r.pw:Hide()
+                    end
+                else
+                    r.hpBg:Hide(); r.hp:Hide(); r.pwBg:Hide(); r.pw:Hide()
+                end
+                local hp = run.finished and ("|cff808080" .. DCL("Finished") .. "|r")
+                           or (m.alive and "" or ("|cffff3333" .. DCL("dead") .. "|r"))
+                local mp = ""
+                local fight = (m.combat and not run.finished) and " |cffff6600*|r" or ""
                 -- DCGM1A: active GM cheats on this bot.
                 if m.cheat:find("g", 1, true) then fight = fight .. " |cffffd100[" .. DCL("God") .. "]|r" end
                 if m.cheat:find("p", 1, true) then fight = fight .. " |cff3da6ff[" .. DCL("Inf. MP") .. "]|r" end
-                r.text:SetText(string.format("|cffffd100%s|r  %s%s|r  %s %d  %s %d  %s %s%s%s",
-                    role, color, m.name, DCL("Lv"), m.level, DCL("iLvl"), m.ilvl, DCL("HP"), hp, mp, fight))
+                r.text:SetText(string.format("%s%s|r  |cff9aa4b2%s %d · %s %d|r  %s%s%s",
+                    color, m.name, DCL("Lv"), m.level, DCL("iLvl"), m.ilvl, hp, mp, fight))  -- DCTEST9A
                 r:Show()
             else
                 r:Hide()
@@ -2892,9 +2951,9 @@ end
         local found = false
         for _, r in ipairs(shown) do if r.id == selectedRun then found = true end end
         if not found then selectedRun = shown[1] and shown[1].id or nil end
-        runOffset = math.max(0, math.min(runOffset, #shown - RUN_ROWS))
+        runOffset = math.max(0, math.min(runOffset, #shown - runVis))  -- DCTEST9A
         for i, row in ipairs(runRows) do
-            local run = shown[i + runOffset]
+            local run = (i <= runVis) and shown[i + runOffset] or nil
             row.run = run
             if run and run.finished then
                 local heroic = run.heroic and (" |cffff8000" .. DCL("(Heroic)") .. "|r") or ""
@@ -2918,12 +2977,12 @@ end
                 row.watch:Show()
                 local mark = run.watching and ("|cff00ff00" .. DCL("Watching") .. "|r  ") or ""
                 local heroic = run.heroic and (" |cffff8000" .. DCL("(Heroic)") .. "|r") or ""
-                local stage = DCL(STAGES[run.stage] or run.stage)
+                local stage = DCL(STAGES[run.stage or ""] or run.stage or "?")  -- DCTEST9A: never nil
                 local alert = run.wiped and ("  |cffff3333" .. DCL("wiped") .. "|r") or (run.combat and ("  |cffff6600" .. DCL("in combat") .. "|r") or "")
                 local dead = (run.deaths and run.deaths > 0) and ("  |cffff3333" .. DCL("Deaths") .. " " .. run.deaths .. "|r") or ""
                 row.l1:SetText(string.format("%s%s|cffffd100%s|r%s  %s  %s %d/%d%s%s",
                     mark, TierTag(run.tier), DungeonName(run.token), heroic, stage, DCL("Bosses"),
-                    run.killed, run.total, dead, alert))  -- DCGM1B3 tier first
+                    run.killed or 0, run.total or 0, dead, alert))  -- DCGM1B3 tier first; DCTEST9A: never nil
                 local detail = DCL("Time") .. " " .. Clock(run.elapsed)
                 if run.boss and run.boss ~= "" then detail = detail .. "  " .. DCL("Target:") .. " " .. run.boss end
                 if run.stall and run.stall ~= "" then
@@ -3028,6 +3087,7 @@ end
                         hp = tonumber(parts[8]) or 0, mp = tonumber(parts[9]) or -1,
                         alive = parts[10] == "1", combat = parts[11] == "1",
                         cheat = parts[13] or "",  -- DCGM1A: "g" god, "p" unlimited power
+                        ptype = tonumber(parts[14]), ppct = tonumber(parts[15]),  -- DCTEST9A
                     }
                 end
             end
@@ -3271,6 +3331,41 @@ end
         lf:SetPoint("TOPLEFT", hostL, "TOPLEFT", 0, 0)
         lf:SetSize(hostL:GetWidth(), 300)
         tclose:Hide(); lClose:Hide()
+        -- DCTEST9A: the camera row to the column's foot, the run list down to it
+        local camY = -58 - RUN_ROWS * RUN_H - 14
+        for _, c in ipairs({ lf:GetChildren() }) do
+            local p = { c:GetPoint(1) }
+            if (c.GetNumPoints and tonumber((c:GetNumPoints())) or 0) == 1 and p[2] == lf and p[3] == "TOPLEFT" and p[5] == camY then
+                saved.moved[#saved.moved + 1] = { c, Anchors(c) }
+                c:ClearAllPoints(); c:SetPoint("BOTTOMLEFT", hostL, "BOTTOMLEFT", p[4], 10)
+            end
+        end
+        -- DCTEST9A: right column in two halves -- party on top, gear / stats below
+        do
+            local rh = tonumber((hostR:GetHeight())) or 0
+            local half = math.floor(rh / 2)
+            local mv = math.max(MEM_ROWS, math.min(MEM_MAX, math.floor((half - 18 - 8) / MEM_H)))
+            saved.memH = memBox:GetHeight()
+            saved.moved[#saved.moved + 1] = { gearLabel, Anchors(gearLabel) }
+            saved.moved[#saved.moved + 1] = { gearBox, Anchors(gearBox) }
+            saved.gearSize = { gearBox:GetWidth(), gearBox:GetHeight() }
+            memVis = mv
+            memBox:SetHeight(mv * MEM_H + 8)
+            gearLabel:ClearAllPoints(); gearLabel:SetPoint("TOPLEFT", memBox, "BOTTOMLEFT", 4, -10)
+            gearBox:ClearAllPoints()
+            gearBox:SetPoint("TOPLEFT", gearLabel, "BOTTOMLEFT", -4, -6)
+            gearBox:SetPoint("BOTTOMRIGHT", hostR, "BOTTOMRIGHT", -10, 10)
+            memBox:EnableMouseWheel(true)
+            memBox:SetScript("OnMouseWheel", function(_, d)
+                memOffset = math.max(0, memOffset - d)
+                if RenderMembers then RenderMembers() end
+            end)
+        end
+        local hh = tonumber((hostL:GetHeight())) or 0
+        local fit = math.floor((hh - 58 - 40 - 8) / RUN_H)
+        runVis = math.max(RUN_ROWS, math.min(RUN_MAX, fit))
+        runBox:SetHeight(runVis * RUN_H + 8)
+        if RenderRuns then RenderRuns() end
         -- the list's lower half: everything anchored straight to lf below SPLIT, or to
         -- its bottom edge, now hangs off the right column (same x, y shifted up)
         local items = { lf:GetChildren() }
@@ -3339,6 +3434,13 @@ end
             Grips(f, true)
         end
         tclose:Show(); lClose:Show()
+        runVis = RUN_ROWS; runBox:SetHeight(RUN_ROWS * RUN_H + 8)  -- DCTEST9A
+        memVis, memOffset = MEM_ROWS, 0
+        if saved.memH then memBox:SetHeight(saved.memH) end
+        if saved.gearSize then gearBox:SetSize(saved.gearSize[1], saved.gearSize[2]) end
+        for i = MEM_ROWS + 1, MEM_MAX do if memRows[i] then memRows[i]:Hide() end end
+        for i = RUN_ROWS + 1, RUN_MAX do if runRows[i] then runRows[i]:Hide() end end
+        lf:Hide()   -- DCTEST9A: on its own first, so RebornWindowScale does not re-open it
         tf:Hide()                            -- leaving Test mode closes the test windows
         saved = nil
     end
@@ -7048,6 +7150,11 @@ do
             view:Show()
             Paint()
             DCTestDock(hosts[1], hosts[2], hosts[3], view)
+            if shell.panelGrip then  -- DCTEST9A: the scale triangle above the docked windows
+                shell.panelGrip:SetFrameStrata(view:GetFrameStrata())
+                shell.panelGrip:SetFrameLevel(view:GetFrameLevel() + 20)
+                shell.panelGrip:Show()
+            end
         else
             if DCTestUndock then DCTestUndock() end
             view:Hide()
@@ -7216,6 +7323,7 @@ do
     grip:SetSize(16, 16)
     grip:SetPoint("BOTTOMRIGHT", shell, "BOTTOMRIGHT", -5, 5)
     grip:SetFrameLevel(shell:GetFrameLevel() + 60)
+    shell.panelGrip = grip  -- DCTEST9A: Test mode lifts it over the test view
     grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
     grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
     grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
@@ -7230,7 +7338,7 @@ do
         self.left = shell:GetLeft() * shell:GetEffectiveScale()
         self:SetScript("OnUpdate", function(g)
             local cx = GetCursorPosition()
-            local sc = (cx - g.left) / (SHELL_W * UIParent:GetEffectiveScale())
+            local sc = (cx - g.left) / ((tonumber((shell:GetWidth())) or SHELL_W) * UIParent:GetEffectiveScale())  -- DCTEST9A: the width shown (Test mode is wider)
             if math.abs(sc - frame:GetScale()) > 0.005 then SetPanelScale(sc) end
         end)
     end)

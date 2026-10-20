@@ -337,6 +337,7 @@ local zh = {
     -- DCUI3E1
     -- DCGM2A
     -- DCUI4A
+    -- DCTEST9A
     ["Clear mode"] = "清本",
     ["Test mode"] = "测试",
     ["Field mode"] = "野外",
