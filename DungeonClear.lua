@@ -3188,7 +3188,7 @@ end
                 dmg5 = tonumber(parts[12]) or 0, heal5 = tonumber(parts[13]) or 0, role = Dash(parts[14]),
                 topSrc = Dash(parts[15]), topSpell = Dash(parts[16]), topAmount = tonumber(parts[17]) or 0,
                 healers = Dash(parts[18]) }  -- DCBOSS1B
-        elseif kind == "TIS" and infoPending then  -- DCBOSS1A: damage taken by source and spell
+        elseif kind == "TIQ" and infoPending then  -- DCBOSS1A/B2: damage taken by source and spell (TIS is the inspect window's)
             infoPending.dmg = infoPending.dmg or {}
             infoPending.dmg[#infoPending.dmg + 1] = { src = parts[2] or "", spellId = tonumber(parts[3]) or 0,
                 spell = (parts[4] ~= "-" and parts[4]) or "", total = tonumber(parts[5]) or 0, hits = tonumber(parts[6]) or 0 }
