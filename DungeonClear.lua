@@ -2821,7 +2821,7 @@ end
     for _, def in ipairs(VIEW_BTNS) do
         local b = LButton(lf, def[1], def[2], def[4])
         if prevView then b:SetPoint("LEFT", prevView, "RIGHT", 4, 0)
-        else b:SetPoint("TOPLEFT", lf, "TOPLEFT", 14, -58 - RUN_ROWS * RUN_H - 14) end
+        else b:SetPoint("TOPLEFT", lf, "TOPLEFT", 14, -58 - RUN_ROWS * RUN_H - 14); lf.dcCamFirst = b end  -- DCTEST9B
         b:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
             GameTooltip:SetText(DCL(def[1]))
@@ -3334,8 +3334,9 @@ end
         -- DCTEST9A: the camera row to the column's foot, the run list down to it
         local camY = -58 - RUN_ROWS * RUN_H - 14
         for _, c in ipairs({ lf:GetChildren() }) do
-            local p = { c:GetPoint(1) }
-            if (c.GetNumPoints and tonumber((c:GetNumPoints())) or 0) == 1 and p[2] == lf and p[3] == "TOPLEFT" and p[5] == camY then
+            local np = c.GetNumPoints and tonumber((c:GetNumPoints())) or 0
+            local p = np == 1 and { c:GetPoint(1) } or {}
+            if c == lf.dcCamFirst or (np == 1 and p[2] == lf and p[3] == "TOPLEFT" and math.abs((tonumber(p[5]) or 0) - camY) < 1) then  -- DCTEST9B
                 saved.moved[#saved.moved + 1] = { c, Anchors(c) }
                 c:ClearAllPoints(); c:SetPoint("BOTTOMLEFT", hostL, "BOTTOMLEFT", p[4], 10)
             end
@@ -3417,6 +3418,16 @@ end
         lf:Show()
         Pin(tf); Pin(lf)
     end
+    -- RebornWOW DCTEST9B: RebornWindowScale may re-open the list a frame after we close it
+    -- (a sub-window hidden during a managed window's OnHide); for a second after leaving
+    -- Test mode, hide it again whenever it shows up outside tiny mode.
+    local closer = CreateFrame("Frame")
+    closer:Hide()
+    closer:SetScript("OnUpdate", function(self, e)
+        self.left = (self.left or 0) - (e or 0)
+        if not docked and not DungeonClearDB.tinyMode and lf:IsShown() then lf:Hide() end
+        if self.left <= 0 then self:Hide() end
+    end)
     function DCTestUndock()
         if not docked then return end
         docked = false
@@ -3442,6 +3453,7 @@ end
         for i = RUN_ROWS + 1, RUN_MAX do if runRows[i] then runRows[i]:Hide() end end
         lf:Hide()   -- DCTEST9A: on its own first, so RebornWindowScale does not re-open it
         tf:Hide()                            -- leaving Test mode closes the test windows
+        closer.left = 1.0; closer:Show()     -- DCTEST9B: and keep it closed
         saved = nil
     end
     -- Esc / a close button while docked: back to the Clear mode
