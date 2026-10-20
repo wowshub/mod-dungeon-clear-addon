@@ -4436,6 +4436,8 @@ UpdateLayout = function()
         tinyBtn:Hide()
         langBtn:Hide()
         testBtn:Hide()
+        -- RebornWOW DCUI4B1: the header GPS button hung on the one-line bar too
+        if _G.DungeonClearHeaderGpsButton then _G.DungeonClearHeaderGpsButton:Hide() end
         onBtn:Hide()
         offBtn:Hide()
         skipBtn:Hide()
@@ -4473,6 +4475,7 @@ UpdateLayout = function()
         tinyBtn:Show()
         langBtn:Show()
         testBtn:Show()
+        if _G.DungeonClearHeaderGpsButton then _G.DungeonClearHeaderGpsButton:Show() end  -- DCUI4B1
         tinyBtn:SetText(DCL("Tiny"))
         onBtn:Show()
         offBtn:Show()
