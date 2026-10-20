@@ -1891,6 +1891,16 @@ end
     end, "Random bots only: join the test party yourself (one bot fewer). 'in + god' also makes you invincible; the bots keep the party's cheat tier. When the run ends you leave the party and go back to where you started.")
     tierBtn.join:SetPoint("LEFT", tierBtn, "RIGHT", 4, 0)
     DCBind(tierBtn.join, JOIN[tierBtn.JoinIndex()].label)
+    -- RebornWOW DCGM1C3: for the refresh on show, and the three options spelled out
+    tierBtn.joinLabels = { JOIN[1].label, JOIN[2].label, JOIN[3].label }
+    tierBtn.TierLabel = function() return TIERS[TierIndex()].label end
+    tierBtn.join:HookScript("OnEnter", function()
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine(DCL("Me: out -- god view: you are not in the party, the run is watched at once."), 1, 0.82, 0, true)
+        GameTooltip:AddLine(DCL("Me: in -- ride along: you are in the party; play, or put yourself on auto-play."), 1, 0.82, 0, true)
+        GameTooltip:AddLine(DCL("Me: in + god -- the same, invincible: any level can come."), 1, 0.82, 0, true)
+        GameTooltip:Show()
+    end)
 
     -- random-comp options
     y = y - 30
@@ -2029,7 +2039,8 @@ end
         if t.joinMe and t.mode ~= "roster" then cmd = cmd .. (t.joinMe == "god" and " withmegod" or " withme") end  -- DCGM1C
         t.ilvl, t.seed = ilvlBox:GetText(), seedBox:GetText()
         Send(cmd)
-        if t.autoWatch and not (t.joinMe and t.mode ~= "roster") then watchAt = GetTime() + 10 end  -- DCGM1C: no watch when you are in it
+        -- DCGM1C3: "Me: out" is god view -- always watch the run (in the party: never)
+        if not (t.joinMe and t.mode ~= "roster") then watchAt = GetTime() + 10 end
     end, "Start a bot test run with the options above. The bots run the dungeon on their own; use Watch to follow them.")
     startBtn:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, y)
     local gearBtn = Button("Gear tiers", 90, function()
@@ -2146,6 +2157,10 @@ end
 
     tf:SetScript("OnShow", function()
         local t = DB()
+        -- RebornWOW DCGM1C3: the Me / tier buttons from the saved choice (they were set
+        -- before the saved variables loaded)
+        if tierBtn.JoinIndex then DCBind(tierBtn.join, tierBtn.joinLabels[tierBtn.JoinIndex()]) end
+        if tierBtn.TierLabel then DCBind(tierBtn, tierBtn.TierLabel()) end
         dungeonBox:SetText(t.token or "")
         heroicCheck:SetChecked(t.heroic and true or false)
         ilvlBox:SetText(t.ilvl or "")
@@ -7300,6 +7315,9 @@ do
             if prefix ~= "DC" or type(msg) ~= "string" or msg:sub(1, 5) ~= "TIER\t" then return end
             local _, _, _, run = strsplit("\t", msg)
             testRun = (run and run ~= "" and run ~= "-") and run or nil
+            if shell.testAutoRow then  -- DCGM1C3: no party, nothing to auto-play
+                if testRun then shell.testAutoRow:Show() else shell.testAutoRow:Hide() end
+            end
             Paint()
         end)
         local origApply = shell.ApplyMode
@@ -7312,6 +7330,8 @@ do
     do
         local hostR = hosts[3]
         local row = CreateFrame("Frame", nil, hostR)
+        shell.testAutoRow = row  -- DCGM1C3: shown only while you are in a test party
+        row:Hide()
         row:SetPoint("BOTTOMLEFT", hostR, "BOTTOMLEFT", 8, 8)
         row:SetPoint("BOTTOMRIGHT", hostR, "BOTTOMRIGHT", -8, 8)
         row:SetHeight(28)
@@ -7375,6 +7395,7 @@ do
                 if not frame:IsShown() then frame:Show() end
                 if DCShellLayout and not (DCTestDocked and DCTestDocked()) then DCShellLayout() end
                 SendDcCommand("status", "addon")
+                row:Show()  -- DCGM1C3: the ask means you are in the party (TIER may lag 5 s)
                 t, left = 0, 120; glow:Show()
                 DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[DC] " .. string.format(DCL("Your party is running dungeon clear (tank: %s). Pick a role on the flashing Auto-play row of the panel and the AI plays your character with the party (suggested: %s); pick Manual to play yourself."),
                     tank or "?", DCL(ROLE[role or ""] or "DPS")) .. "|r")

@@ -340,6 +340,10 @@ local zh = {
     -- DCTEST9A
     -- DCTEST10A
     -- DCTEST10B
+    -- DCGM1C3
+    ["Me: out -- god view: you are not in the party, the run is watched at once."] = "不进队 = 上帝视角：你不在队伍里，开始后自动观战，纯看机器人打。",
+    ["Me: in -- ride along: you are in the party; play, or put yourself on auto-play."] = "进队 = 抱大腿：你是队员，可以跟着打，也可以开托管；掉队太远会被传送到坦克身边。",
+    ["Me: in + god -- the same, invincible: any level can come."] = "进队+无敌 = 纯体验：同进队，再加无敌，等级多少都没关系。",
     ["Test party -- controlled by the test"] = "测试队伍：由测试控制",
     ["Test party"] = "测试队伍",
     ["Mine"] = "我的",
