@@ -4433,9 +4433,10 @@ end)
 do
     -- RebornWOW DCUI3D1: three columns -- left (dungeons / runs share it), centre, right
     -- (party over invite); a 40 px top bar above them
-    local W1, W2, WC, W4, W5 = 300, 300, 330, 340, 340
+    -- RebornWOW DCUI3F2: 393 / 433 so Clear mode is as wide as Test mode (1192) -- no size jump
+    local W1, W2, WC, W4, W5 = 393, 393, 330, 433, 433
     local GAP, PAD = 8, 10
-    local SHELL_W = W1 + WC + W4 + GAP * 2 + PAD * 2                -- 1006 (DCUI3D1)
+    local SHELL_W = W1 + WC + W4 + GAP * 2 + PAD * 2                -- 1192 (DCUI3F2; was 1006)
     local SHELL_H = 700                                             -- DCUI3D1: top bar + columns
     local CENTRE_X = PAD + W1 + GAP                                 -- the window's left edge in the shell
     local SCALE_MIN, SCALE_MAX, SCALE_STEP, SCALE_DEFAULT = 0.6, 1.6, 0.1, 1.0
