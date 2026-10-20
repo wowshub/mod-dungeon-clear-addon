@@ -3360,7 +3360,7 @@ end
             gearLabel:ClearAllPoints(); gearLabel:SetPoint("TOPLEFT", memBox, "BOTTOMLEFT", 4, -10)
             gearBox:ClearAllPoints()
             gearBox:SetPoint("TOPLEFT", gearLabel, "BOTTOMLEFT", -4, -6)
-            gearBox:SetPoint("BOTTOMRIGHT", hostR, "BOTTOMRIGHT", -10, 10)
+            gearBox:SetPoint("BOTTOMRIGHT", hostR, "BOTTOMRIGHT", -10, 44)  -- DCTEST9E: the auto-play row below
             memBox:EnableMouseWheel(true)
             memBox:SetScript("OnMouseWheel", function(_, d)
                 memOffset = math.max(0, memOffset - d)
@@ -7204,6 +7204,79 @@ do
     frame:HookScript("OnHide", function() if DCTestUndock and DCTestDocked and DCTestDocked() then DCTestUndock() end end)
     frame:HookScript("OnShow", function() if shell:IsShown() then shell.ApplyMode() end end)
     PaintButtons()
+    -- ------------------------------------------------------------ Test mode auto-play row (RebornWOW DCTEST9E)
+    -- Joined to a test party ("Join" / "Join + god"), the auto-play question used to jump
+    -- to the Clear panel's row. Test mode has its own row at the right column's foot: the
+    -- same commands, the same highlight, and it is the one that flashes in Test mode.
+    do
+        local hostR = hosts[3]
+        local row = CreateFrame("Frame", nil, hostR)
+        row:SetPoint("BOTTOMLEFT", hostR, "BOTTOMLEFT", 8, 8)
+        row:SetPoint("BOTTOMRIGHT", hostR, "BOTTOMRIGHT", -8, 8)
+        row:SetHeight(28)
+        local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        label:SetPoint("LEFT", row, "LEFT", 4, 0)
+        DCBind(label, "Auto-play:")
+        local btns, prev = {}, label
+        for _, seg in ipairs(SELFBOT_SEGS) do
+            local b = SmallButton(row, seg.label, 54)
+            b:SetPoint("LEFT", prev, "RIGHT", prev == label and 6 or 2, 0)
+            b:SetScript("OnClick", function()
+                SendDcCommand("selfbot", seg.key)
+                if seg.key ~= "off" then SendDcCommand("status", "addon") end
+                if row.glow then row.glow:Hide() end
+            end)
+            b:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                GameTooltip:SetText(DCL(seg.label)); GameTooltip:AddLine(DCL(seg.tip), 1, 1, 1, true); GameTooltip:Show()
+            end)
+            b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            b.dcKey = seg.key
+            btns[#btns + 1] = b
+            prev = b
+        end
+        local gm = SmallButton(row, "GM", 34)
+        gm:SetPoint("LEFT", prev, "RIGHT", 2, 0)
+        gm:SetScript("OnClick", function() if DCMyPartyMenu then DCMyPartyMenu() end end)
+        gm.dcKindPref = "gm"
+        -- highlight follows the server's SELFBOT state, like the Clear row
+        local function Paint()
+            for _, b in ipairs(btns) do
+                local on = (b.dcKey == "off" and selfBotUI.role == nil) or b.dcKey == selfBotUI.role
+                if on then b:LockHighlight() else b:UnlockHighlight() end
+            end
+        end
+        local origUpdate = selfBotUI.update
+        selfBotUI.update = function(...) origUpdate(...); Paint() end
+        Paint()
+        -- the flashing frame
+        local glow = CreateFrame("Frame", nil, row)
+        glow:SetAllPoints(row)
+        glow:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
+        glow:SetBackdropBorderColor(1, 0.82, 0, 1)
+        local fill = glow:CreateTexture(nil, "BACKGROUND"); fill:SetAllPoints(glow); fill:SetTexture(1, 0.82, 0, 0.16)
+        glow:Hide()
+        local t, left = 0, 0
+        glow:SetScript("OnUpdate", function(self, e)
+            t = t + (e or 0); left = left - (e or 0)
+            self:SetAlpha(0.25 + 0.75 * math.abs(math.sin(t * 3)))
+            if left <= 0 then self:Hide() end
+        end)
+        row.glow = glow
+        -- the question: in Test mode flash this row and stay; otherwise the Clear panel
+        local origAsk = DCShowSelfBotAsk
+        local ROLE = { tank = "Tank", heal = "Heal", dps = "DPS" }
+        DCShowSelfBotAsk = function(role, tank)
+            if Mode() == "test" and not DungeonClearDB.tinyMode and frame:IsShown() and DCTestDocked and DCTestDocked() then
+                SendDcCommand("status", "addon")
+                t, left = 0, 120; glow:Show()
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffd100[DC] " .. string.format(DCL("Your party is running dungeon clear (tank: %s). Pick a role on the flashing Auto-play row of the panel and the AI plays your character with the party (suggested: %s); pick Manual to play yourself."),
+                    tank or "?", DCL(ROLE[role or ""] or "DPS")) .. "|r")
+                return
+            end
+            if origAsk then return origAsk(role, tank) end
+        end
+    end
     end)()
 
     -- ------------------------------------------------------------ server replies
