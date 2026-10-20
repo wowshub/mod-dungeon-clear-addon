@@ -3296,23 +3296,9 @@ end
     -- that hook (ours is hooked later, so it runs later); its corner grips are hidden.
     local pins, hooked = {}, false
     local function Pin(f) if docked and pins[f] then pins[f]() end end
-    -- RebornWOW DCTEST9C: a watchdog while docked -- RebornWindowScale may take a window
-    -- over later (timer scan, /rwin add) and re-parent / re-place / re-scale it, its hook
-    -- then running after ours. Every 0.3 s: wrong parent, anchor or scale -> pin again.
-    local dockView, dockHost = nil, {}
-    local watch = CreateFrame("Frame")
-    watch:Hide()
-    local wacc = 0
-    watch:SetScript("OnUpdate", function(self, e)
-        if not docked then self:Hide() return end
-        wacc = wacc + (e or 0)
-        if wacc < 0.3 then return end
-        wacc = 0
-        for f, host in pairs(dockHost) do
-            local _, rel = f:GetPoint(1)
-            if f:GetParent() ~= dockView or rel ~= host or math.abs((f:GetScale() or 1) - 1) > 0.001 then Pin(f) end
-        end
-    end)
+    -- RebornWOW DCTEST9D: while docked both windows carry `dcHosted`; RebornWindowScale
+    -- (WSC1G) then leaves them alone -- no saved place / scale, no re-parent, no re-open.
+    local function Hosted(on) tf.dcHosted = on or nil; lf.dcHosted = on or nil end
     local function Grips(f, show)
         for _, c in ipairs({ f:GetChildren() }) do
             local n = c.GetNormalTexture and c:GetNormalTexture()
@@ -3325,6 +3311,8 @@ end
     function DCTestDock(hostL, hostC, hostR, view)
         if docked then return end
         docked = true
+        Hosted(true)          -- DCTEST9D: before anything moves
+        listBtn:Hide()        -- DCTEST9D: the list is always shown in Test mode
         saved = { tf = {}, lf = {}, moved = {} }
         for key, f in pairs({ tf = tf, lf = lf }) do
             local s = saved[key]
@@ -3434,19 +3422,7 @@ end
         if not tf:IsShown() then tf:Show() end
         lf:Show()
         Pin(tf); Pin(lf)
-        dockView, dockHost = view, { [tf] = hostC, [lf] = hostL }  -- DCTEST9C
-        wacc = 0; watch:Show()
     end
-    -- RebornWOW DCTEST9B: RebornWindowScale may re-open the list a frame after we close it
-    -- (a sub-window hidden during a managed window's OnHide); for a second after leaving
-    -- Test mode, hide it again whenever it shows up outside tiny mode.
-    local closer = CreateFrame("Frame")
-    closer:Hide()
-    closer:SetScript("OnUpdate", function(self, e)
-        self.left = (self.left or 0) - (e or 0)
-        if not docked and not DungeonClearDB.tinyMode and lf:IsShown() then lf:Hide() end
-        if self.left <= 0 then self:Hide() end
-    end)
     function DCTestUndock()
         if not docked then return end
         docked = false
@@ -3470,9 +3446,10 @@ end
         if saved.gearSize then gearBox:SetSize(saved.gearSize[1], saved.gearSize[2]) end
         for i = MEM_ROWS + 1, MEM_MAX do if memRows[i] then memRows[i]:Hide() end end
         for i = RUN_ROWS + 1, RUN_MAX do if runRows[i] then runRows[i]:Hide() end end
-        lf:Hide()   -- DCTEST9A: on its own first, so RebornWindowScale does not re-open it
+        lf:Hide()
         tf:Hide()                            -- leaving Test mode closes the test windows
-        closer.left = 1.0; closer:Show()     -- DCTEST9B: and keep it closed
+        listBtn:Show()
+        Hosted(false)         -- DCTEST9D: only now, after both are closed
         saved = nil
     end
     -- Esc / a close button while docked: back to the Clear mode
