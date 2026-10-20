@@ -2613,6 +2613,9 @@ end
                         ((dd.topSpell ~= "") and (" - " .. dd.topSpell) or "") .. "  " .. Kfmt(dd.topAmount) .. "|r"
                 end
             end
+            if dd.healers and dd.healers ~= "" then  -- DCBOSS1B: where the healers were
+                lines[#lines + 1] = "      |cff999999" .. DCL("Healers") .. ": " .. dd.healers .. "|r"
+            end
         end
         if info.dmg and #info.dmg > 0 then
             lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Damage taken by source") .. " --|r"
@@ -2626,6 +2629,13 @@ end
             lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Healing done") .. " --|r"
             for _, t in ipairs(info.heals) do
                 lines[#lines + 1] = "  " .. Kfmt(t.total) .. "  " .. t.name
+            end
+        end
+        if info.hstats and #info.hstats > 0 then  -- DCBOSS1B
+            lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Healer activity") .. " --|r"
+            for _, h in ipairs(info.hstats) do
+                lines[#lines + 1] = "  " .. string.format(DCL("%s: %d s in combat, moving %d s, casting %d s; ally below half health %d s (moving %d s, idle %d s); lowest mana %d%%"),
+                    h.name, h.combat, h.moving, h.casting, h.low, h.lowMoving, h.lowIdle, h.minMana)
             end
         end
         for i = #lines, 1, -1 do statsBox:AddMessage(lines[i]) end
@@ -2755,7 +2765,7 @@ end
             { text = DCL("Run stats"), notCheckable = true, func = function()
                 selectedRun = run.id
                 if run.kills then
-                    info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {}, dmg = run.dmg, heals = run.heals }
+                    info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {}, dmg = run.dmg, heals = run.heals, hstats = run.hstats }
                     bottomMode = "stats"
                     RenderRuns()
                 else
@@ -2791,7 +2801,7 @@ end
     LoadStats = function(run)
         if not run then return end
         if run.finished and run.kills then
-            info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {}, dmg = run.dmg, heals = run.heals }
+            info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {}, dmg = run.dmg, heals = run.heals, hstats = run.hstats }
             bottomMode = "stats"
             RenderRuns()
         else
@@ -3176,11 +3186,17 @@ end
                 killer = Dash(parts[6]), spellId = tonumber(parts[7]) or 0, spell = Dash(parts[8]),
                 amount = tonumber(parts[9]) or 0, overkill = tonumber(parts[10]) or 0, bossHp = tonumber(parts[11]) or -1,
                 dmg5 = tonumber(parts[12]) or 0, heal5 = tonumber(parts[13]) or 0, role = Dash(parts[14]),
-                topSrc = Dash(parts[15]), topSpell = Dash(parts[16]), topAmount = tonumber(parts[17]) or 0 }
+                topSrc = Dash(parts[15]), topSpell = Dash(parts[16]), topAmount = tonumber(parts[17]) or 0,
+                healers = Dash(parts[18]) }  -- DCBOSS1B
         elseif kind == "TIS" and infoPending then  -- DCBOSS1A: damage taken by source and spell
             infoPending.dmg = infoPending.dmg or {}
             infoPending.dmg[#infoPending.dmg + 1] = { src = parts[2] or "", spellId = tonumber(parts[3]) or 0,
                 spell = (parts[4] ~= "-" and parts[4]) or "", total = tonumber(parts[5]) or 0, hits = tonumber(parts[6]) or 0 }
+        elseif kind == "TIX" and infoPending then  -- DCBOSS1B: what each healer did
+            infoPending.hstats = infoPending.hstats or {}
+            infoPending.hstats[#infoPending.hstats + 1] = { name = parts[2] or "", combat = tonumber(parts[3]) or 0,
+                moving = tonumber(parts[4]) or 0, casting = tonumber(parts[5]) or 0, low = tonumber(parts[6]) or 0,
+                lowMoving = tonumber(parts[7]) or 0, lowIdle = tonumber(parts[8]) or 0, minMana = tonumber(parts[9]) or 100 }
         elseif kind == "TIH" and infoPending then  -- DCBOSS1A: healing by healer
             infoPending.heals = infoPending.heals or {}
             infoPending.heals[#infoPending.heals + 1] = { name = parts[2] or "", total = tonumber(parts[3]) or 0 }
@@ -3192,7 +3208,7 @@ end
             local h = HistFind(info.id)  -- DCTEST6A: keep the stats with the finished record
             if h then
                 h.kills, h.deathLog = info.kills, info.deaths
-                h.dmg, h.heals = info.dmg, info.heals  -- DCBOSS1A
+                h.dmg, h.heals, h.hstats = info.dmg, info.heals, info.hstats  -- DCBOSS1A / 1B
                 if #info.list > 0 then h.checklist = info.list end
             end
             bottomMode = "stats"
