@@ -2531,6 +2531,21 @@ end
         return (TIER_COLOR[last] or "|cffffd100") .. "[" .. table.concat(names, ">") .. "]|r "
     end
 
+    -- RebornWOW DCBOSS1A: 12400 -> 12.4k
+    local function Kfmt(n)
+        n = tonumber(n) or 0
+        if n >= 1000000 then return string.format("%.1fm", n / 1000000) end
+        if n >= 1000 then return string.format("%.1fk", n / 1000) end
+        return tostring(n)
+    end
+    local function SpellText(id, fallback)
+        if id and id > 0 then
+            local n = GetSpellInfo(id)
+            if n then return n end
+        end
+        return fallback or ""
+    end
+
     local function RenderStats()
         local run = info and (FindRun(info.id) or HistFind(info.id))
         gearBox:Show()
@@ -2584,6 +2599,34 @@ end
         for _, dd in ipairs(info.deaths) do
             local by = dd.by ~= "" and (" <- " .. dd.by .. (dd.onBoss and (" |cffff8000(" .. DCL("boss") .. ")|r") or "")) or (" |cff999999(" .. DCL("out of combat") .. ")|r")
             lines[#lines + 1] = "  " .. Clock(dd.t) .. "  |cffff3333" .. dd.name .. "|r" .. by
+            -- DCBOSS1A: what actually killed them
+            if dd.killer and dd.killer ~= "" then
+                local sp = SpellText(dd.spellId, dd.spell)
+                local txt = dd.killer .. (sp ~= "" and (" - " .. sp) or "") .. "  " .. Kfmt(dd.amount)
+                if (dd.overkill or 0) > 0 then txt = txt .. " (" .. DCL("overkill") .. " " .. Kfmt(dd.overkill) .. ")" end
+                if (dd.bossHp or -1) >= 0 then txt = txt .. "  " .. string.format(DCL("boss at %d%%"), dd.bossHp) end
+                lines[#lines + 1] = "      |cffbbbbbb" .. DCL("Killed by") .. ": " .. txt .. "|r"
+                lines[#lines + 1] = "      |cff999999" .. string.format(DCL("Last 5 s: %s damage taken, %s healing received"),
+                    Kfmt(dd.dmg5), Kfmt(dd.heal5)) .. "|r"
+                if dd.topSrc and dd.topSrc ~= "" and dd.topAmount > 0 then
+                    lines[#lines + 1] = "      |cff999999" .. DCL("Most damage") .. ": " .. dd.topSrc ..
+                        ((dd.topSpell ~= "") and (" - " .. dd.topSpell) or "") .. "  " .. Kfmt(dd.topAmount) .. "|r"
+                end
+            end
+        end
+        if info.dmg and #info.dmg > 0 then
+            lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Damage taken by source") .. " --|r"
+            for _, t in ipairs(info.dmg) do
+                local sp = SpellText(t.spellId, t.spell)
+                lines[#lines + 1] = "  " .. Kfmt(t.total) .. "  " .. t.src .. ((sp ~= "") and (" - " .. sp) or "") ..
+                    "  |cff999999x" .. t.hits .. "|r"
+            end
+        end
+        if info.heals and #info.heals > 0 then
+            lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Healing done") .. " --|r"
+            for _, t in ipairs(info.heals) do
+                lines[#lines + 1] = "  " .. Kfmt(t.total) .. "  " .. t.name
+            end
         end
         for i = #lines, 1, -1 do statsBox:AddMessage(lines[i]) end
     end
@@ -2712,7 +2755,7 @@ end
             { text = DCL("Run stats"), notCheckable = true, func = function()
                 selectedRun = run.id
                 if run.kills then
-                    info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {} }
+                    info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {}, dmg = run.dmg, heals = run.heals }
                     bottomMode = "stats"
                     RenderRuns()
                 else
@@ -2748,7 +2791,7 @@ end
     LoadStats = function(run)
         if not run then return end
         if run.finished and run.kills then
-            info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {} }
+            info = { id = run.id, kills = run.kills, deaths = run.deathLog or {}, list = run.checklist or {}, dmg = run.dmg, heals = run.heals }
             bottomMode = "stats"
             RenderRuns()
         else
@@ -3126,15 +3169,32 @@ end
         elseif kind == "TIB" and infoPending then
             infoPending.kills[#infoPending.kills + 1] = { t = tonumber(parts[2]) or 0, name = parts[3] or "" }
         elseif kind == "TID" and infoPending then
+            -- DCBOSS1A: fields 6.. say what killed them; "-" means none
+            local function Dash(v) if v == nil or v == "-" then return "" end return v end
             infoPending.deaths[#infoPending.deaths + 1] = { t = tonumber(parts[2]) or 0, name = parts[3] or "",
-                onBoss = parts[4] == "1", by = parts[5] or "" }
+                onBoss = parts[4] == "1", by = parts[5] or "",
+                killer = Dash(parts[6]), spellId = tonumber(parts[7]) or 0, spell = Dash(parts[8]),
+                amount = tonumber(parts[9]) or 0, overkill = tonumber(parts[10]) or 0, bossHp = tonumber(parts[11]) or -1,
+                dmg5 = tonumber(parts[12]) or 0, heal5 = tonumber(parts[13]) or 0, role = Dash(parts[14]),
+                topSrc = Dash(parts[15]), topSpell = Dash(parts[16]), topAmount = tonumber(parts[17]) or 0 }
+        elseif kind == "TIS" and infoPending then  -- DCBOSS1A: damage taken by source and spell
+            infoPending.dmg = infoPending.dmg or {}
+            infoPending.dmg[#infoPending.dmg + 1] = { src = parts[2] or "", spellId = tonumber(parts[3]) or 0,
+                spell = (parts[4] ~= "-" and parts[4]) or "", total = tonumber(parts[5]) or 0, hits = tonumber(parts[6]) or 0 }
+        elseif kind == "TIH" and infoPending then  -- DCBOSS1A: healing by healer
+            infoPending.heals = infoPending.heals or {}
+            infoPending.heals[#infoPending.heals + 1] = { name = parts[2] or "", total = tonumber(parts[3]) or 0 }
         elseif kind == "TIL" and infoPending then  -- DCTEST7A: boss checklist row
             infoPending.list[#infoPending.list + 1] = { name = parts[2] or "", objective = parts[3] == "1",
                                                         status = parts[4] or "alive" }
         elseif kind == "TI_END" and infoPending then
             info, infoPending = infoPending, nil
             local h = HistFind(info.id)  -- DCTEST6A: keep the stats with the finished record
-            if h then h.kills, h.deathLog = info.kills, info.deaths; if #info.list > 0 then h.checklist = info.list end end
+            if h then
+                h.kills, h.deathLog = info.kills, info.deaths
+                h.dmg, h.heals = info.dmg, info.heals  -- DCBOSS1A
+                if #info.list > 0 then h.checklist = info.list end
+            end
             bottomMode = "stats"
             if lf:IsShown() then RenderGear() end
         elseif kind == "TI_ERR" then
