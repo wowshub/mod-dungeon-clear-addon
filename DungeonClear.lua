@@ -592,6 +592,12 @@ local function SendDcCommand(subCmd, param, silent)
     end
 end
 
+-- RebornWOW DCGM3A: the panel's GM dot-commands. A dead player cannot speak ("You cannot speak
+-- while dead!") but may use the addon channel: the server runs the text for him (command "gmcmd").
+function DCGmCommand(cmd)
+    if UnitIsDeadOrGhost("player") then SendDcCommand("gmcmd", cmd) else SendChatMessage(cmd, "SAY") end
+end
+
 -- RebornWOW DCGM1F: cheat-tier tag at the top right of the status box (design §9.5):
 -- always one of [Normal] / [Story] / [Casual] / [Speed] for the party this panel
 -- controls -- the test run you watch, else the party you are in. Polled every 5 s
@@ -859,7 +865,7 @@ spectateResetBtn:SetScript("OnClick", function()
     if DCTestWatchActive then
         DCTestWatchActive = false
         SetCameraState(false)
-        SendChatMessage(".dc test watch off", "SAY")
+        DCGmCommand(".dc test watch off")  -- DCGM3A
         return
     end
     if cameraState == false then return end
@@ -1652,7 +1658,7 @@ end
             DCTestWatchActive = not cmd:find(" off$")
             SetCameraState(DCTestWatchActive and "follow" or false)
         end
-        SendChatMessage(cmd, "SAY")
+        DCGmCommand(cmd)  -- DCGM3A: the dead cannot speak; the addon channel carries it
     end
 
     local function Capturing() return GetTime() < capture.untilT end
@@ -4770,7 +4776,7 @@ do
     end
 
     local menuFrame = CreateFrame("Frame", "DungeonClearShellMenu", UIParent, "UIDropDownMenuTemplate")
-    local function Chat(cmd) SendChatMessage(cmd, "SAY") end
+    local function Chat(cmd) DCGmCommand(cmd) end  -- DCGM3A
 
     -- ============================================================ 1: all dungeons
     local col1 = Column(W1, "All dungeons")
@@ -7327,7 +7333,7 @@ do
             pend = nil
             local me = UnitName("player")
             if me then
-                SendChatMessage(".groupsummon " .. me, "SAY")
+                DCGmCommand(".groupsummon " .. me)  -- DCGM3A
                 DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC] " .. DCL("Summoning the party to the entrance.") .. "|r")
             end
         end
@@ -7341,7 +7347,7 @@ do
             return
         end
         pend = { t = 0, total = 0 }
-        SendChatMessage(string.format(".go xyz %.1f %.1f %.1f %d", d.x, d.y, d.z, d.mapId), "SAY")
+        DCGmCommand(string.format(".go xyz %.1f %.1f %.1f %d", d.x, d.y, d.z, d.mapId))  -- DCGM3A
         DEFAULT_CHAT_FRAME:AddMessage("|cff3da6ff[DC] " .. DCL("Teleporting to the entrance; the party follows when you arrive.") .. "|r")
     end
     end)()
@@ -9280,7 +9286,7 @@ end)
     capture:SetSize(130, 22)
     capture:SetPoint("RIGHT", clear, "LEFT", -6, 0)
     DCBind(capture, "Capture position")
-    capture:SetScript("OnClick", function() SendChatMessage(".gps", "SAY") end)
+    capture:SetScript("OnClick", function() DCGmCommand(".gps") end)  -- DCGM3A
     capture:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         GameTooltip:AddLine(DCL("Sends .gps (GM). With a creature targeted, records the creature instead of you."), 1, 1, 1, true)
