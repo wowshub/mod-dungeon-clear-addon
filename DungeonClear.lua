@@ -384,7 +384,7 @@ local function UpdateTinyWidth()
     -- pad(10) + status circle(16) + gap(6) + pull circle(16) + gap(4)
     -- + pull caption + gap(2) + action text + pad(12)
     local w = 10 + 16 + 6 + 16 + 4 + (tinyPullText and tinyPullText:GetStringWidth() or 0)
-        + 2 + (tinyText:GetStringWidth() or 0) + 12
+        + 2 + (tinyText:GetStringWidth() or 0) + 12 + 58  -- DCUI4B2: the [Small] [Big] buttons
     frame:SetWidth(math.max(170, w))
 end
 
@@ -1436,10 +1436,41 @@ tinyBtn:SetSize(40, 20)
 tinyBtn:SetPoint("RIGHT", closeBtn, "LEFT", 2, 0)
 tinyBtn:SetText(DCL("Tiny"))
 
+-- RebornWOW DCUI4B2: three sizes -- [Big] [Small] beside Mini in the top bar, and [Small] [Big]
+-- inside the mini bar. A do-block and one global table keep the main chunk's local budget.
+do
+    local function Make(name, w, h, key, nameKey, descKey)
+        local b = CreateFrame("Button", name, frame, "UIPanelButtonTemplate")
+        b:SetSize(w, h)
+        DCBind(b, key)
+        b:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:AddLine(DCL(nameKey))
+            GameTooltip:AddLine(DCL(descKey), 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        return b
+    end
+    local BIG = "All five columns: dungeons, runs, the centre controls, your party and the roster."
+    local SMALL = "Only the centre column: the controls of the current mode."
+    local sb = {}
+    sb.big = Make("DungeonClearSizeBigButton", 34, 20, "Big", "Big panel", BIG)
+    sb.big:SetPoint("RIGHT", tinyBtn, "LEFT", -2, 0)
+    sb.small = Make("DungeonClearSizeSmallButton", 34, 20, "Small", "Small panel", SMALL)
+    sb.small:SetPoint("RIGHT", sb.big, "LEFT", -2, 0)
+    sb.miniBig = Make("DungeonClearMiniBigButton", 26, 18, "Big", "Big panel", BIG)
+    sb.miniBig:SetPoint("RIGHT", frame, "RIGHT", -4, 0)
+    sb.miniSmall = Make("DungeonClearMiniSmallButton", 26, 18, "Small", "Small panel", SMALL)
+    sb.miniSmall:SetPoint("RIGHT", sb.miniBig, "LEFT", -2, 0)
+    sb.miniBig:Hide(); sb.miniSmall:Hide()
+    DungeonClearSizeButtons = sb
+end
+
 -- RebornWOW: 中文 / EN switch, the same red button as the Witch Doctor talent panel.
 local langBtn = CreateFrame("Button", "DungeonClearLangButton", frame, "UIPanelButtonTemplate")
 langBtn:SetSize(44, 20)
-langBtn:SetPoint("RIGHT", tinyBtn, "LEFT", -2, 0)
+langBtn:SetPoint("RIGHT", DungeonClearSizeButtons.small, "LEFT", -2, 0)  -- DCUI4B2: after [Big] [Small]
 langBtn:SetScript("OnClick", function() DCLoc.Toggle() end)
 langBtn:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -3409,7 +3440,9 @@ end
     -- DCGM1F: no button here any more -- "my party" is mode 1 and lives on the main
     -- panel (GM button) and /dc gm; this window is for test runs (design §9.1).
     DCLoc.OnChange(function() if lf:IsShown() then RenderRuns() end end)
-    tf:HookScript("OnShow", function() if DB().listShown then lf:Show() end end)
+    tf:HookScript("OnShow", function()
+        if DB().listShown and not (DCTestDockedSingle and DCTestDockedSingle()) then lf:Show() end  -- DCUI4B2
+    end)
     tf:HookScript("OnHide", function() local was = lf:IsShown(); lf:Hide(); DB().listShown = was end)
 
     testBtn:SetScript("OnClick", function()
@@ -3438,11 +3471,14 @@ end
         for _, p in ipairs(list) do r:SetPoint(p[1], p[2], p[3], p[4], p[5]) end
     end
     local origPlace = PlaceList
+    local dockedSingle = false   -- RebornWOW DCUI4B2: only the test window is docked (small panel)
+    local bottomInset = 0        -- DCUI4B2: room under the docked test window (the auto-play row)
     PlaceList = function(...)
-        if docked then return end    -- the panel places it
+        if docked and not dockedSingle then return end    -- the panel places it
         return origPlace(...)
     end
     function DCTestDocked() return docked end
+    function DCTestDockedSingle() return dockedSingle end
     -- RebornWOW DCUI4A2: RebornWindowScale re-applies its saved scale and UIParent
     -- position on every show of these windows. While docked, each show re-pins them after
     -- that hook (ours is hooked later, so it runs later); its corner grips are hidden.
@@ -3450,7 +3486,7 @@ end
     local function Pin(f) if docked and pins[f] then pins[f]() end end
     -- RebornWOW DCTEST9D: while docked both windows carry `dcHosted`; RebornWindowScale
     -- (WSC1G) then leaves them alone -- no saved place / scale, no re-parent, no re-open.
-    local function Hosted(on) tf.dcHosted = on or nil; lf.dcHosted = on or nil end
+    local function Hosted(on) tf.dcHosted = on or nil; lf.dcHosted = (on and not dockedSingle) and true or nil end
     local function Grips(f, show)
         for _, c in ipairs({ f:GetChildren() }) do
             local n = c.GetNormalTexture and c:GetNormalTexture()
@@ -3460,14 +3496,17 @@ end
             end
         end
     end
-    function DCTestDock(hostL, hostC, hostR, view)
+    function DCTestDock(hostL, hostC, hostR, view, single)
         if docked then return end
         docked = true
+        dockedSingle = single and true or false  -- DCUI4B2
         Hosted(true)          -- DCTEST9D: before anything moves
-        lHint:Hide()          -- DCTEST10A: room for [Mine] [All]
-        listBtn:Hide()        -- DCTEST9D: the list is always shown in Test mode
+        if not single then
+            lHint:Hide()          -- DCTEST10A: room for [Mine] [All]
+            listBtn:Hide()        -- DCTEST9D: the list is always shown in Test mode
+        end
         saved = { tf = {}, lf = {}, moved = {} }
-        for key, f in pairs({ tf = tf, lf = lf }) do
+        for key, f in pairs(single and { tf = tf } or { tf = tf, lf = lf }) do
             local s = saved[key]
             s.parent, s.points, s.w, s.h = f:GetParent(), Anchors(f), f:GetWidth(), f:GetHeight()
             s.strata, s.bg = f:GetFrameStrata(), { f:GetBackdropColor() }
@@ -3484,11 +3523,14 @@ end
         end
         tf:ClearAllPoints()
         tf:SetPoint("TOPLEFT", hostC, "TOPLEFT", 0, 0)
-        tf:SetPoint("BOTTOMRIGHT", hostC, "BOTTOMRIGHT", 0, 0)
+        tf:SetPoint("BOTTOMRIGHT", hostC, "BOTTOMRIGHT", 0, bottomInset)
+        tclose:Hide()
+        if single then lf:Hide() end  -- DCUI4B2: the list opens from the [Test run list] button, as its own window
+        if not single then  -- DCUI4B2: the list and its columns are only docked in the big panel
         lf:ClearAllPoints()
         lf:SetPoint("TOPLEFT", hostL, "TOPLEFT", 0, 0)
         lf:SetSize(hostL:GetWidth(), 300)
-        tclose:Hide(); lClose:Hide()
+        lClose:Hide()
         -- DCTEST9A: the camera row to the column's foot, the run list down to it
         local camY = -58 - RUN_ROWS * RUN_H - 14
         for _, c in ipairs({ lf:GetChildren() }) do
@@ -3550,31 +3592,37 @@ end
                 end
             end
         end
+        end  -- DCUI4B2: not single
         -- DCUI4A2: the docked place, re-applied after any other addon's OnShow
         pins[tf] = function()
             tf:SetParent(view); tf:SetScale(1)
             tf:SetFrameStrata(view:GetFrameStrata()); tf:SetFrameLevel(view:GetFrameLevel() + 4)
             tf:ClearAllPoints()
             tf:SetPoint("TOPLEFT", hostC, "TOPLEFT", 0, 0)
-            tf:SetPoint("BOTTOMRIGHT", hostC, "BOTTOMRIGHT", 0, 0)
+            tf:SetPoint("BOTTOMRIGHT", hostC, "BOTTOMRIGHT", 0, bottomInset)
             Grips(tf, false)
         end
-        pins[lf] = function()
+        pins[lf] = (not single) and function()
             lf:SetParent(view); lf:SetScale(1)
             lf:SetFrameStrata(view:GetFrameStrata()); lf:SetFrameLevel(view:GetFrameLevel() + 4)
             lf:ClearAllPoints()
             lf:SetPoint("TOPLEFT", hostL, "TOPLEFT", 0, 0)
             lf:SetSize(hostL:GetWidth(), 300)
             Grips(lf, false)
-        end
+        end or nil
         if not hooked then
             hooked = true
             tf:HookScript("OnShow", function() Pin(tf) end)
             lf:HookScript("OnShow", function() Pin(lf) end)
         end
         if not tf:IsShown() then tf:Show() end
-        lf:Show()
+        if not single then lf:Show() end  -- DCUI4B2
         Pin(tf); Pin(lf)
+    end
+    -- RebornWOW DCUI4B2: room under the docked test window (the small panel's auto-play row)
+    function DCTestSetBottomInset(n)
+        bottomInset = n or 0
+        if docked and pins[tf] then pins[tf]() end
     end
     function DCTestUndock()
         if not docked then return end
@@ -3582,15 +3630,17 @@ end
         for _, m in ipairs(saved.moved) do Reanchor(m[1], m[2]) end
         for key, f in pairs({ tf = tf, lf = lf }) do
             local s = saved[key]
-            f:SetParent(s.parent)
-            f:SetFrameStrata(s.strata)
-            Reanchor(f, s.points)
-            f:SetSize(s.w, s.h)
-            f:RegisterForDrag("LeftButton")
-            f:SetBackdropColor(unpack(s.bg))
-            f:SetBackdropBorderColor(unpack(s.border))
-            if s.scale then f:SetScale(s.scale) end       -- DCUI4A2
-            Grips(f, true)
+            if s and s.parent then  -- DCUI4B2: the small panel docks only tf
+                f:SetParent(s.parent)
+                f:SetFrameStrata(s.strata)
+                Reanchor(f, s.points)
+                f:SetSize(s.w, s.h)
+                f:RegisterForDrag("LeftButton")
+                f:SetBackdropColor(unpack(s.bg))
+                f:SetBackdropBorderColor(unpack(s.border))
+                if s.scale then f:SetScale(s.scale) end       -- DCUI4A2
+                Grips(f, true)
+            end
         end
         tclose:Show(); lClose:Show()
         runVis = RUN_ROWS; runBox:SetHeight(RUN_ROWS * RUN_H + 8)  -- DCTEST9A
@@ -3604,6 +3654,8 @@ end
         listBtn:Show()
         lHint:Show()          -- DCTEST10A
         Hosted(false)         -- DCTEST9D: only now, after both are closed
+        dockedSingle = false  -- DCUI4B2
+        bottomInset = 0
         saved = nil
     end
     -- RebornWOW DCTEST9F: only the mode buttons change the mode. A docked test window that
@@ -3613,7 +3665,7 @@ end
     later:Hide()
     later:SetScript("OnUpdate", function(self)
         self:Hide()
-        if docked and not tf:IsShown() then tf:Show(); lf:Show() end
+        if docked and not tf:IsShown() then tf:Show(); if not dockedSingle then lf:Show() end end  -- DCUI4B2
     end)
     lf:HookScript("OnHide", function()
         if docked then later:Show() end
@@ -4438,6 +4490,10 @@ UpdateLayout = function()
         testBtn:Hide()
         -- RebornWOW DCUI4B1: the header GPS button hung on the one-line bar too
         if _G.DungeonClearHeaderGpsButton then _G.DungeonClearHeaderGpsButton:Hide() end
+        do  -- DCUI4B2: the mini bar has its own two size buttons
+            local sb = DungeonClearSizeButtons
+            sb.big:Hide(); sb.small:Hide(); sb.miniBig:Show(); sb.miniSmall:Show()
+        end
         onBtn:Hide()
         offBtn:Hide()
         skipBtn:Hide()
@@ -4476,6 +4532,10 @@ UpdateLayout = function()
         langBtn:Show()
         testBtn:Show()
         if _G.DungeonClearHeaderGpsButton then _G.DungeonClearHeaderGpsButton:Show() end  -- DCUI4B1
+        do  -- DCUI4B2 (DCShellLayout hides what the small panel does not keep)
+            local sb = DungeonClearSizeButtons
+            sb.miniBig:Hide(); sb.miniSmall:Hide(); sb.big:Show(); sb.small:Show()
+        end
         tinyBtn:SetText(DCL("Tiny"))
         onBtn:Show()
         offBtn:Show()
@@ -4516,6 +4576,26 @@ tinyBtn:SetScript("OnClick", function()
     DungeonClearDB.tinyMode = not DungeonClearDB.tinyMode
     UpdateLayout()
 end)
+
+-- RebornWOW DCUI4B2: "big" | "small" | "mini". The size is kept; mini is the old tinyMode flag
+-- (a right-click on the mini bar, or anything that opens the panel, returns to the last size).
+function DCSetPanelSize(size)
+    if size == "mini" then
+        DungeonClearDB.tinyMode = true
+    else
+        DungeonClearDB.tinyMode = false
+        DungeonClearDB.panelSize = (size == "small") and "small" or nil
+    end
+    if not frame:IsShown() then frame:Show() end
+    UpdateLayout()
+end
+do
+    local sb = DungeonClearSizeButtons
+    sb.big:SetScript("OnClick", function() DCSetPanelSize("big") end)
+    sb.small:SetScript("OnClick", function() DCSetPanelSize("small") end)
+    sb.miniBig:SetScript("OnClick", function() DCSetPanelSize("big") end)
+    sb.miniSmall:SetScript("OnClick", function() DCSetPanelSize("small") end)
+end
 
 toggleBossesBtn:SetScript("OnClick", function()
     DungeonClearDB.bossesFolded = not DungeonClearDB.bossesFolded
@@ -4602,6 +4682,9 @@ do
     -- ------------------------------------------------------------ shell + background
     local shell = CreateFrame("Frame", "DungeonClearShell", frame)
     shell:SetFrameLevel(math.max(0, frame:GetFrameLevel() - 1))
+    -- RebornWOW DCUI4B2: the small panel is the centre column alone
+    function shell.IsSmall() return DungeonClearDB.panelSize == "small" end
+    function shell.Width() return shell.IsSmall() and (WC + PAD * 2) or SHELL_W end
     shell:EnableMouse(true)  -- clicks on the shell drag the window like its own body
     shell:RegisterForDrag("LeftButton")
     shell:SetScript("OnDragStart", function() if frame:GetScript("OnDragStart") then frame:GetScript("OnDragStart")(frame) end end)
@@ -6493,7 +6576,8 @@ do
     shell.modeBtns = {}
     local modeBar = CreateFrame("Frame", nil, tb)
     modeBar:SetSize(3 * 52 + 8, 24)
-    modeBar:SetPoint("LEFT", Sep(title), "RIGHT", 10, 0)
+    local sepTitle = Sep(title)  -- DCUI4B2
+    modeBar:SetPoint("LEFT", sepTitle, "RIGHT", 10, 0)
     for i, m in ipairs({ { "clear", "Clear mode" }, { "test", "Test mode" }, { "field", "Field mode" } }) do
         local b = SmallButton(modeBar, m[2], 50)
         b:SetPoint("LEFT", modeBar, "LEFT", 2 + (i - 1) * 52, 0)
@@ -6501,7 +6585,8 @@ do
         b.dcMode = m[1]
         shell.modeBtns[m[1]] = b
     end
-    local dungeon = Text(13); dungeon:SetPoint("LEFT", Sep(modeBar), "RIGHT", 10, 0)
+    local sepMode = Sep(modeBar)  -- DCUI4B2
+    local dungeon = Text(13); dungeon:SetPoint("LEFT", sepMode, "RIGHT", 10, 0)
     local dot = tb:CreateTexture(nil, "ARTWORK"); dot:SetSize(8, 8); dot:SetPoint("LEFT", dungeon, "RIGHT", 16, 0)
     local state = Text(13); state:SetPoint("LEFT", dot, "RIGHT", 5, 0)
     local timer = Text(13); timer:SetPoint("LEFT", state, "RIGHT", 12, 0)
@@ -6515,6 +6600,7 @@ do
                     casual = { "Casual", "|cff00ff00" }, speed = { "Speed", "|cffff6600" } }
     local runSince, acc = nil, 1
     local function Paint()
+        if shell.barSmall then return end  -- DCUI4B2: the small panel's bar shows the modes only
         local name, itype, diff = GetInstanceInfo()
         if itype == "party" or itype == "raid" then
             local hero = (itype == "party" and diff == 2) or (itype == "raid" and (diff == 3 or diff == 4))
@@ -6555,6 +6641,17 @@ do
         Paint()
     end)
     DCLoc.OnChange(Paint)
+    -- RebornWOW DCUI4B2: the small panel is 350 wide -- title and the run readout give way to
+    -- the mode buttons (and the tools at the right end)
+    function shell.SizeBar(small)
+        shell.barSmall = small and true or nil
+        for _, e in ipairs({ title, sepTitle, sepMode, dungeon, dot, state, timer, bossTxt, barBg, barFill, tier }) do
+            if small then e:Hide() else e:Show() end
+        end
+        modeBar:ClearAllPoints()
+        if small then modeBar:SetPoint("LEFT", tb, "LEFT", 4, 0) else modeBar:SetPoint("LEFT", sepTitle, "RIGHT", 10, 0) end
+        if not small then Paint() end
+    end
 
     -- left column: two tabs over one place (col1 and col2 share the same rectangle)
     local tabAll = SmallButton(shell, "All dungeons", 100)
@@ -6566,6 +6663,11 @@ do
     col1.title:Hide()
     col2.title:Hide()
     function shell.ApplyLeftTab()
+        if shell.IsSmall() then  -- DCUI4B2: no left column in the small panel
+            col1:Hide(); col2:Hide(); tabAll:Hide(); tabRuns:Hide()
+            return
+        end
+        tabAll:Show(); tabRuns:Show()
         if DungeonClearDB.leftTab == "runs" then
             col1:Hide(); col2:Show(); tabRuns:LockHighlight(); tabAll:UnlockHighlight()
         else
@@ -7320,14 +7422,20 @@ do
         h:SetBackdropBorderColor(0.20, 0.23, 0.30, 0.9)
         hosts[i] = h
     end
-    local function Place()
+    -- RebornWOW DCUI4B2: `single` = the small panel: only the centre host is placed and shown
+    local function Place(single)
         local x = PAD - 4
         for i, w in ipairs({ TL, TC, TR }) do
             local h = hosts[i]
             h:ClearAllPoints()
-            h:SetPoint("TOPLEFT", view, "TOPLEFT", x, 0)
-            h:SetPoint("BOTTOMLEFT", view, "BOTTOMLEFT", x, PAD - 4)
-            x = x + w + GAP
+            if single and i ~= 2 then
+                h:Hide()
+            else
+                h:Show()
+                h:SetPoint("TOPLEFT", view, "TOPLEFT", x, 0)
+                h:SetPoint("BOTTOMLEFT", view, "BOTTOMLEFT", x, PAD - 4)
+                x = x + w + GAP
+            end
         end
     end
     Place()
@@ -7356,12 +7464,20 @@ do
         local test = not off and Mode() == "test" and not DungeonClearDB.tinyMode and DCTestDock ~= nil
         if test then
             local h = shell:GetHeight() or SHELL_H
-            shell:SetWidth(TEST_W)
-            frame:SetClampRectInsets(-CENTRE_X, TEST_W - CENTRE_X - WC, PAD + 40, -(h - frame:GetHeight() - PAD - 40))
+            -- RebornWOW DCUI4B2: the small Test panel is the test window alone
+            local single = shell.IsSmall()
+            local tw = single and (PAD * 2 + TC) or TEST_W
+            local cx = single and PAD or CENTRE_X
+            -- switching big <-> small while docked: dock again the other way
+            if DCTestDocked and DCTestDocked() and DCTestDockedSingle and DCTestDockedSingle() ~= single then DCTestUndock() end
+            shell:SetWidth(tw)
+            frame:SetClampRectInsets(-cx, tw - cx - WC, PAD + 40, -(h - frame:GetHeight() - PAD - 40))
             view:SetFrameLevel(frame:GetFrameLevel() + 30)
             view:Show()
+            Place(single)
             Paint()
-            DCTestDock(hosts[1], hosts[2], hosts[3], view)
+            DCTestDock(hosts[1], hosts[2], hosts[3], view, single)
+            if shell.PlaceTestAutoRow then shell.PlaceTestAutoRow() end
             if shell.panelGrip then  -- DCTEST9A: the scale triangle above the docked windows
                 shell.panelGrip:SetFrameStrata(view:GetFrameStrata())
                 shell.panelGrip:SetFrameLevel(view:GetFrameLevel() + 20)
@@ -7370,8 +7486,8 @@ do
         else
             if DCTestUndock then DCTestUndock() end
             view:Hide()
-            if not DungeonClearDB.tinyMode and shell:IsShown() then shell:SetWidth(SHELL_W) end
-            local f = math.min(1, (SHELL_W / SHELL_H) / (2048 / 984))
+            if not DungeonClearDB.tinyMode and shell:IsShown() then shell:SetWidth(shell.Width()) end  -- DCUI4B2
+            local f = math.min(1, (shell.Width() / SHELL_H) / (2048 / 984))
             art:SetTexCoord((1 - f) / 2, (1 + f) / 2, 0, 984 / 1024)
         end
         PaintButtons()
@@ -7511,6 +7627,19 @@ do
             if left <= 0 then self:Hide() end
         end)
         row.glow = glow
+        -- RebornWOW DCUI4B2: the small Test panel has no right column -- the row sits under the
+        -- test window instead, and the window gives it room while it is shown
+        function shell.PlaceTestAutoRow()
+            local single = shell.IsSmall()
+            local host = single and hosts[2] or hosts[3]
+            row:SetParent(view); row:SetFrameLevel(view:GetFrameLevel() + 12)
+            row:ClearAllPoints()
+            row:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", 8, 8)
+            row:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", -8, 8)
+            if DCTestSetBottomInset then DCTestSetBottomInset((single and row:IsShown()) and 40 or 0) end
+        end
+        row:HookScript("OnShow", function() if shell.IsSmall() and DCTestSetBottomInset then DCTestSetBottomInset(40) end end)
+        row:HookScript("OnHide", function() if DCTestSetBottomInset then DCTestSetBottomInset(0) end end)
         -- the question: in Test mode flash this row and stay; otherwise the Clear panel
         local origAsk = DCShowSelfBotAsk
         local ROLE = { tank = "Tank", heal = "Heal", dps = "DPS" }
@@ -7752,9 +7881,12 @@ do
         end
         frame:SetBackdropBorderColor(0, 0, 0, 0)
         local h = math.max(SHELL_H, (frame:GetHeight() or 0) + PAD * 2 + 40)
+        local small = shell.IsSmall()                       -- RebornWOW DCUI4B2
+        local SW = shell.Width()
+        local CX = small and PAD or CENTRE_X
         shell:ClearAllPoints()
-        shell:SetPoint("TOPLEFT", frame, "TOPLEFT", -CENTRE_X, PAD + 40)
-        shell:SetSize(SHELL_W, h)
+        shell:SetPoint("TOPLEFT", frame, "TOPLEFT", -CX, PAD + 40)
+        shell:SetSize(SW, h)
         -- left: dungeons and runs share one place (tabs); right: party (260 high) over invite
         local top, rx = -(PAD + 40), PAD + W1 + GAP + WC + GAP
         for _, c in ipairs({ col1, col2 }) do
@@ -7772,7 +7904,26 @@ do
         shell.rosterVis = math.max(1, math.floor((h - PAD * 2 - 40 - 260 - GAP - 110 - 34) / 34))
         if shell.ApplyLeftTab then shell.ApplyLeftTab() end
         -- keep the WHOLE panel on screen, not just the centre window
-        frame:SetClampRectInsets(-CENTRE_X, SHELL_W - CENTRE_X - WC, PAD + 40, -(h - frame:GetHeight() - PAD - 40))
+        frame:SetClampRectInsets(-CX, SW - CX - WC, PAD + 40, -(h - frame:GetHeight() - PAD - 40))
+        -- RebornWOW DCUI4B2: the small panel keeps the centre column; the tools that need room
+        -- (coordinates, test, language, [Small]) give way, [Big] and Mini stay
+        do
+            local sb = DungeonClearSizeButtons
+            local gps = _G.DungeonClearHeaderGpsButton
+            if small then
+                col4:Hide(); col5:Hide()
+                testBtn:Hide(); langBtn:Hide(); if gps then gps:Hide() end
+                sb.small:Hide()
+            else
+                col4:Show(); col5:Show()
+                testBtn:Show(); langBtn:Show(); if gps then gps:Show() end
+                sb.small:Show()
+            end
+            sb.big:Show()
+            if small then sb.small:UnlockHighlight(); sb.big:UnlockHighlight()
+            else sb.big:LockHighlight(); sb.small:UnlockHighlight() end
+            if shell.SizeBar then shell.SizeBar(small) end
+        end
         shell:Show()
         if shell.ApplyMode then shell.ApplyMode() end  -- DCUI4A
         partyDirty = true

@@ -344,6 +344,13 @@ local zh = {
     -- DCBOSS1A
     -- DCBOSS1B
     -- DCBOSS1C
+    -- DCUI4B2
+    ["Big"] = "大",
+    ["Small"] = "小",
+    ["Big panel"] = "大面板",
+    ["Small panel"] = "小面板",
+    ["All five columns: dungeons, runs, the centre controls, your party and the roster."] = "五列：副本、记录、中间的控制、我的队伍和邀请名单。",
+    ["Only the centre column: the controls of the current mode."] = "只留中间一列：当前模式的控制。",
     ["killer at %d%% health"] = "致死者血量 %d%%",
     ["Cast check while idle"] = "闲置时的施法检查",
     ["Healers"] = "治疗者",
