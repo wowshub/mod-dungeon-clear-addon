@@ -2087,7 +2087,7 @@ end
         "Stop the running test (only one running; otherwise the reply lists the run ids).")
     stopBtn:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, y)
     local stopAllBtn = Button("Stop all", 80, function()
-        StaticPopup_Show("DUNGEONCLEAR_TEST_STOPALL")
+        StaticPopup_Show("DUNGEONCLEAR_TEST_STOPALL", DCL("Stop ALL bot test runs and test plans?"))  -- DCTEST10C: "%s" needs it
     end, "Stop every test run and every test plan.")
     stopAllBtn:SetPoint("LEFT", stopBtn, "RIGHT", 4, 0)
     local planBtn = Button("Plan status", 80, function() Send(".dc test plan status") end,
@@ -2647,8 +2647,17 @@ end
         if key ~= "normal" then cmd = cmd .. " cheat=" .. key end
         return cmd
     end
+    -- RebornWOW DCTEST10C: "Me" is about you, not about the run -- a replay follows the
+    -- button as it is now: in / in + god join, out watches (god view)
+    local function JoinSuffix(run)
+        local me = DB().joinMe
+        if run.roster or not me then return "" end
+        return me == "god" and " withmegod" or " withme"
+    end
     local function ReplayAtTier(run, key)
-        Send(TierReplayCommand(run, key))
+        local suffix = JoinSuffix(run)
+        Send(TierReplayCommand(run, key) .. suffix)
+        if suffix == "" then watchAt = GetTime() + 10 end  -- Me: out = god view
         capture.relistAt = GetTime() + 4
     end
     local function ReplayAllTiers(run)
@@ -2672,9 +2681,11 @@ end
             sub[#sub + 1] = { text = DCL(t.label), notCheckable = true,
                               func = function() CloseDropDownMenus(); ReplayAtTier(run, t.key) end }
         end
-        sub[#sub + 1] = { text = DCL("All four tiers at once"), notCheckable = true, disabled = run.roster,
+        sub[#sub + 1] = { text = DCL("All four tiers at once") .. "  |cff999999(" .. DCL("Me: out") .. ")|r", notCheckable = true, disabled = run.roster,
                           func = function() CloseDropDownMenus(); ReplayAllTiers(run) end }
-        return { text = DCL("Run it again (same seed and gear)"), notCheckable = true, hasArrow = true, menuList = sub }
+        -- DCTEST10C: the title says how it starts (the "Me" button as it is now)
+        local how = run.roster and "" or ("  |cff999999(" .. DCL((DB().joinMe == "god" and "Me: in + god") or (DB().joinMe and "Me: in") or "Me: out") .. ")|r")
+        return { text = DCL("Run it again (same seed and gear)") .. how, notCheckable = true, hasArrow = true, menuList = sub }
     end
     -- Switch a running test's tier (the server drops the old cheats, applies the new ones).
     local function SwitchTier(run, key)
