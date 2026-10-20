@@ -2087,7 +2087,10 @@ end
         "Stop the running test (only one running; otherwise the reply lists the run ids).")
     stopBtn:SetPoint("TOPLEFT", tf, "TOPLEFT", 14, y)
     local stopAllBtn = Button("Stop all", 80, function()
-        StaticPopup_Show("DUNGEONCLEAR_TEST_STOPALL", DCL("Stop ALL bot test runs and test plans?"))  -- DCTEST10C: "%s" needs it
+        -- RebornWOW DCTEST10D: the finished sentence as the dialog text, no "%s" to fill
+        local d = StaticPopupDialogs["DUNGEONCLEAR_TEST_STOPALL"]
+        if d then d.text = DCL("Stop ALL bot test runs and test plans?") or "Stop ALL bot test runs and test plans?" end
+        StaticPopup_Show("DUNGEONCLEAR_TEST_STOPALL")
     end, "Stop every test run and every test plan.")
     stopAllBtn:SetPoint("LEFT", stopBtn, "RIGHT", 4, 0)
     local planBtn = Button("Plan status", 80, function() Send(".dc test plan status") end,
@@ -2113,9 +2116,8 @@ end
         timeout = 0, whileDead = true, hideOnEscape = true,
     }
     StaticPopupDialogs["DUNGEONCLEAR_TEST_STOPALL"] = {
-        text = "%s",
+        text = "Stop ALL bot test runs and test plans?",  -- DCTEST10D: set again (translated) on click
         button1 = YES, button2 = NO,
-        OnShow = function(self) self.text:SetText(DCL("Stop ALL bot test runs and test plans?")) end,
         OnAccept = function() Send(".dc test stop all") end,
         timeout = 0, whileDead = true, hideOnEscape = true,
     }
