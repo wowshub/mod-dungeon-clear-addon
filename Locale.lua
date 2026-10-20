@@ -336,6 +336,13 @@ local zh = {
     -- DCSB2B
     -- DCUI3E1
     -- DCGM2A
+    -- DCUI4A
+    ["Clear mode"] = "清本",
+    ["Test mode"] = "测试",
+    ["Field mode"] = "野外",
+    ["Run dungeon clear with your party."] = "带自己的队伍清本。",
+    ["Bot test runs (GM): settings, the run list and the test party in this panel."] = "机器人测试（GM）：设置、测试记录和测试队伍都在这个面板里。",
+    ["Levelling, quests and gathering for you and your bots -- coming next."] = "你和你的机器人练级、做任务、采集——下一步开发。",
     ["Take the whole party to the entrance (GM)"] = "带全队去入口（GM）",
     ["Summoning the party to the entrance."] = "正在把队伍召唤到入口。",
     ["You are not in a party."] = "你不在队伍中。",

@@ -3205,6 +3205,106 @@ end
     end)
     Tip(testBtn, "Bot Test Runs (GM)", "Start, watch and stop automated bot test runs (.dc test).")
     DCLoc.OnChange(function() if tf:IsShown() then RefreshDungeonList() end end)
+
+    -- ------------------------------------------------------------ dock into the panel (RebornWOW DCUI4A)
+    -- Test mode of the big panel: the bot test window becomes the centre column and the
+    -- run list is split by height -- runs and camera row (the upper 300 px) stay in the
+    -- left column, the party and gear / stats below move to the right column. Nothing is
+    -- rebuilt: frames are re-parented and re-anchored, and DCTestUndock() puts every
+    -- anchor, size, strata and drag back exactly as it was.
+    ;(function()
+    local SPLIT = -296           -- list anchors below this move to the right column
+    local saved                  -- what DCTestUndock restores
+    local docked = false
+    local function Anchors(r)
+        local list = {}
+        for i = 1, (r.GetNumPoints and tonumber((r:GetNumPoints())) or 0) do list[i] = { r:GetPoint(i) } end
+        return list
+    end
+    local function Reanchor(r, list)
+        r:ClearAllPoints()
+        for _, p in ipairs(list) do r:SetPoint(p[1], p[2], p[3], p[4], p[5]) end
+    end
+    local origPlace = PlaceList
+    PlaceList = function(...)
+        if docked then return end    -- the panel places it
+        return origPlace(...)
+    end
+    function DCTestDocked() return docked end
+    function DCTestDock(hostL, hostC, hostR, view)
+        if docked then return end
+        docked = true
+        saved = { tf = {}, lf = {}, moved = {} }
+        for key, f in pairs({ tf = tf, lf = lf }) do
+            local s = saved[key]
+            s.parent, s.points, s.w, s.h = f:GetParent(), Anchors(f), f:GetWidth(), f:GetHeight()
+            s.strata, s.bg = f:GetFrameStrata(), { f:GetBackdropColor() }
+            s.border = { f:GetBackdropBorderColor() }
+            f:SetParent(view)
+            f:SetFrameStrata(view:GetFrameStrata())
+            f:SetFrameLevel(view:GetFrameLevel() + 4)
+            f:RegisterForDrag()                 -- no dragging out of the panel
+            f:SetBackdropColor(0, 0, 0, 0)
+            f:SetBackdropBorderColor(0, 0, 0, 0)
+        end
+        tf:ClearAllPoints()
+        tf:SetPoint("TOPLEFT", hostC, "TOPLEFT", 0, 0)
+        tf:SetPoint("BOTTOMRIGHT", hostC, "BOTTOMRIGHT", 0, 0)
+        lf:ClearAllPoints()
+        lf:SetPoint("TOPLEFT", hostL, "TOPLEFT", 0, 0)
+        lf:SetSize(hostL:GetWidth(), 300)
+        tclose:Hide(); lClose:Hide()
+        -- the list's lower half: everything anchored straight to lf below SPLIT, or to
+        -- its bottom edge, now hangs off the right column (same x, y shifted up)
+        local items = { lf:GetChildren() }
+        for _, r in ipairs({ lf:GetRegions() }) do items[#items + 1] = r end
+        for _, r in ipairs(items) do
+            local pts = Anchors(r)
+            local move = false
+            for _, p in ipairs(pts) do
+                if p[2] == lf and ((p[3] or ""):find("BOTTOM") or ((p[3] or ""):find("TOP") and (p[5] or 0) < SPLIT)) then
+                    move = true
+                end
+            end
+            if move then
+                saved.moved[#saved.moved + 1] = { r, pts }
+                r:ClearAllPoints()
+                for _, p in ipairs(pts) do
+                    local rel, rp, x, y = p[2], p[3] or p[1], p[4] or 0, p[5] or 0
+                    if rel == lf then
+                        rel = hostR
+                        if rp:find("TOP") then y = y + 300 end
+                    end
+                    r:SetPoint(p[1], rel, rp, x, y)
+                end
+            end
+        end
+        if not tf:IsShown() then tf:Show() end
+        lf:Show()
+    end
+    function DCTestUndock()
+        if not docked then return end
+        docked = false
+        for _, m in ipairs(saved.moved) do Reanchor(m[1], m[2]) end
+        for key, f in pairs({ tf = tf, lf = lf }) do
+            local s = saved[key]
+            f:SetParent(s.parent)
+            f:SetFrameStrata(s.strata)
+            Reanchor(f, s.points)
+            f:SetSize(s.w, s.h)
+            f:RegisterForDrag("LeftButton")
+            f:SetBackdropColor(unpack(s.bg))
+            f:SetBackdropBorderColor(unpack(s.border))
+        end
+        tclose:Show(); lClose:Show()
+        tf:Hide()                            -- leaving Test mode closes the test windows
+        saved = nil
+    end
+    -- Esc / a close button while docked: back to the Clear mode
+    tf:HookScript("OnHide", function()
+        if docked and DCShellSetMode then DCShellSetMode("clear") end
+    end)
+    end)()
 end)()
 
 -- Bot detail window (RebornWOW DCTEST4A): a test bot's character sheet -- gear laid
@@ -6068,7 +6168,19 @@ do
     title:SetPoint("LEFT", tb, "LEFT", 12, 0)
     title:SetTextColor(0.24, 0.60, 1.0)
     DCBind(title, "Dungeon Clear")
-    local dungeon = Text(13); dungeon:SetPoint("LEFT", Sep(title), "RIGHT", 10, 0)
+    -- RebornWOW DCUI4A: [Clear] [Test] [Field] -- one panel, three modes
+    shell.modeBtns = {}
+    local modeBar = CreateFrame("Frame", nil, tb)
+    modeBar:SetSize(3 * 52 + 8, 24)
+    modeBar:SetPoint("LEFT", Sep(title), "RIGHT", 10, 0)
+    for i, m in ipairs({ { "clear", "Clear mode" }, { "test", "Test mode" }, { "field", "Field mode" } }) do
+        local b = SmallButton(modeBar, m[2], 50)
+        b:SetPoint("LEFT", modeBar, "LEFT", 2 + (i - 1) * 52, 0)
+        b:SetScript("OnClick", function() if DCShellSetMode then DCShellSetMode(m[1]) end end)
+        b.dcMode = m[1]
+        shell.modeBtns[m[1]] = b
+    end
+    local dungeon = Text(13); dungeon:SetPoint("LEFT", Sep(modeBar), "RIGHT", 10, 0)
     local dot = tb:CreateTexture(nil, "ARTWORK"); dot:SetSize(8, 8); dot:SetPoint("LEFT", dungeon, "RIGHT", 16, 0)
     local state = Text(13); state:SetPoint("LEFT", dot, "RIGHT", 5, 0)
     local timer = Text(13); timer:SetPoint("LEFT", state, "RIGHT", 12, 0)
@@ -6818,6 +6930,118 @@ do
     end)
     end)()
 
+    -- ------------------------------------------------------------ panel modes (RebornWOW DCUI4A)
+    -- [Clear] is the panel as it was. [Test] widens the panel and docks the bot test
+    -- window (centre) and the run list (left: runs; right: party, gear / stats) in it, over
+    -- a cover painted with the same background so the Clear controls stay out of sight.
+    -- [Field] is coming (DCFIELD1A). The mode is kept per account.
+    ;(function()
+    local TL, TC, TR = 392, 372, 392
+    local TEST_W = PAD + TL + GAP + TC + GAP + TR + PAD      -- 1192
+    local view = CreateFrame("Frame", "DungeonClearTestView", shell)
+    view:SetPoint("TOPLEFT", shell, "TOPLEFT", 4, -(PAD + 40))
+    view:SetPoint("BOTTOMRIGHT", shell, "BOTTOMRIGHT", -4, 4)
+    view:EnableMouse(true)                                    -- clicks never reach the Clear controls
+    view:Hide()
+    local cover = view:CreateTexture(nil, "BACKGROUND")
+    cover:SetAllPoints(view); cover:SetTexture(0.05, 0.07, 0.10, 0.98)
+    local paint = view:CreateTexture(nil, "BORDER")
+    paint:SetAllPoints(view)
+    local hosts = {}
+    for i, w in ipairs({ TL, TC, TR }) do
+        local h = CreateFrame("Frame", nil, view)
+        h:SetWidth(w)
+        h:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                        tile = true, tileSize = 12, edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+        h:SetBackdropColor(0.02, 0.03, 0.05, 0.55)
+        h:SetBackdropBorderColor(0.20, 0.23, 0.30, 0.9)
+        hosts[i] = h
+    end
+    local function Place()
+        local x = PAD - 4
+        for i, w in ipairs({ TL, TC, TR }) do
+            local h = hosts[i]
+            h:ClearAllPoints()
+            h:SetPoint("TOPLEFT", view, "TOPLEFT", x, 0)
+            h:SetPoint("BOTTOMLEFT", view, "BOTTOMLEFT", x, PAD - 4)
+            x = x + w + GAP
+        end
+    end
+    Place()
+    -- the cover shows the part of the shell's painting it hides
+    local function Paint()
+        local tex = art:IsShown() and art:GetTexture()
+        if not tex then paint:Hide() return end
+        local W, H = shell:GetWidth() or TEST_W, shell:GetHeight() or SHELL_H
+        local f = math.min(1, (W / H) / (2048 / 984))
+        local u0, u1, v1 = (1 - f) / 2, (1 + f) / 2, 984 / 1024
+        art:SetTexCoord(u0, u1, 0, v1)
+        local top = (PAD + 40 - 4) / (H - 8)
+        paint:SetTexture(tex)
+        paint:SetTexCoord(u0, u1, top * v1, v1)
+        paint:Show()
+    end
+    local function Mode() return DungeonClearDB.panelMode == "test" and "test" or "clear" end
+    local function PaintButtons()
+        for m, b in pairs(shell.modeBtns or {}) do
+            if m == Mode() then b:LockHighlight() else b:UnlockHighlight() end
+            if m == "field" then b:Disable() end
+        end
+    end
+    -- re-applied after every layout; `off` forces the Clear look (tiny mode)
+    function shell.ApplyMode(off)
+        local test = not off and Mode() == "test" and not DungeonClearDB.tinyMode and DCTestDock ~= nil
+        if test then
+            local h = shell:GetHeight() or SHELL_H
+            shell:SetWidth(TEST_W)
+            frame:SetClampRectInsets(-CENTRE_X, TEST_W - CENTRE_X - WC, PAD + 40, -(h - frame:GetHeight() - PAD - 40))
+            view:SetFrameLevel(frame:GetFrameLevel() + 30)
+            view:Show()
+            Paint()
+            DCTestDock(hosts[1], hosts[2], hosts[3], view)
+        else
+            if DCTestUndock then DCTestUndock() end
+            view:Hide()
+            if not DungeonClearDB.tinyMode and shell:IsShown() then shell:SetWidth(SHELL_W) end
+            local f = math.min(1, (SHELL_W / SHELL_H) / (2048 / 984))
+            art:SetTexCoord((1 - f) / 2, (1 + f) / 2, 0, 984 / 1024)
+        end
+        PaintButtons()
+    end
+    function DCShellSetMode(m)
+        if m == "field" then return end
+        local want = (m == "test") and "test" or nil
+        if DungeonClearDB.panelMode == want then return end
+        DungeonClearDB.panelMode = want
+        if DungeonClearDB.tinyMode then DungeonClearDB.tinyMode = false; UpdateLayout() end
+        if not frame:IsShown() then frame:Show() end
+        if DCShellLayout then DCShellLayout() else shell.ApplyMode() end  -- clamp + mode
+    end
+    -- the top bar's Test tool switches modes (tiny mode keeps the floating window)
+    testBtn:SetScript("OnClick", function()
+        if DungeonClearDB.tinyMode then
+            local tf = _G.DungeonClearTestFrame
+            if tf then if tf:IsShown() then tf:Hide() else tf:Show() end end
+            return
+        end
+        DCShellSetMode(Mode() == "test" and "clear" or "test")
+    end)
+    for m, b in pairs(shell.modeBtns or {}) do
+        b:HookScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+            GameTooltip:AddLine(DCL(m == "clear" and "Clear mode" or (m == "test" and "Test mode" or "Field mode")))
+            GameTooltip:AddLine(DCL(m == "clear" and "Run dungeon clear with your party." or
+                (m == "test" and "Bot test runs (GM): settings, the run list and the test party in this panel." or
+                "Levelling, quests and gathering for you and your bots -- coming next.")), 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        b:HookScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    frame:HookScript("OnHide", function() if DCTestUndock and DCTestDocked and DCTestDocked() then DCTestUndock() end end)
+    frame:HookScript("OnShow", function() if shell:IsShown() then shell.ApplyMode() end end)
+    PaintButtons()
+    end)()
+
     -- ------------------------------------------------------------ server replies
     local dlPending
     local ev = CreateFrame("Frame", nil, shell)
@@ -6992,6 +7216,7 @@ do
     local loaded = false
     function DCShellLayout()
         if DungeonClearDB.tinyMode then
+            if shell.ApplyMode then shell.ApplyMode(true) end  -- DCUI4A: tiny = no test dock
             DCShellTargetHeight = nil
             closeBtn:ClearAllPoints(); closeBtn:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
             -- RebornWOW DCUI3D2: the window's own row layout back
@@ -7057,6 +7282,7 @@ do
         -- keep the WHOLE panel on screen, not just the centre window
         frame:SetClampRectInsets(-CENTRE_X, SHELL_W - CENTRE_X - WC, PAD + 40, -(h - frame:GetHeight() - PAD - 40))
         shell:Show()
+        if shell.ApplyMode then shell.ApplyMode() end  -- DCUI4A
         partyDirty = true
         if not loaded then
             loaded = true
