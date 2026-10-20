@@ -6542,9 +6542,28 @@ do
     local WINDOWS = { "DungeonClearFrame", "DungeonClearTestFrame", "DungeonClearTestListFrame", "DungeonClearQueueFrame",
                       "DungeonClearGpsFrame", "DungeonClearChatCopyFrame", "DungeonClearCorpseRunFrame", "DungeonClearPickerFrame",
                       "DungeonClearRunStatsFrame", "DungeonClearSelfBotAsk", "DungeonClearBotInspectFrame" }
+    -- RebornWOW DCUI3F1: skin before the first draw -- once for every window (shown or
+    -- not) and again in each window's OnShow, which runs before it is drawn; a window
+    -- created later is hooked as soon as it exists. The timer only catches buttons added
+    -- after a window opened.
+    local hookedWin = {}
+    local function HookWindow(w)
+        if hookedWin[w] then return end
+        hookedWin[w] = true
+        SkinTree(w, 0)
+        w:HookScript("OnShow", function(self) SkinTree(self, 0) end)
+    end
+    local function HookAll()
+        for _, name in ipairs(WINDOWS) do
+            local w = _G[name]
+            if type(w) == "table" and w.HookScript and w.GetChildren then HookWindow(w) end
+        end
+    end
     local scan = CreateFrame("Frame", nil, UIParent)
-    local acc = 2
+    local acc, hookAcc = 2, 0
     scan:SetScript("OnUpdate", function(_, elapsed)
+        hookAcc = hookAcc + (elapsed or 0)
+        if hookAcc >= 0.5 then hookAcc = 0; HookAll() end  -- DCUI3F1: new windows at once
         acc = acc + (elapsed or 0)
         if acc < 1.5 then return end
         acc = 0
@@ -6553,6 +6572,9 @@ do
             if type(w) == "table" and w.IsShown and w:IsShown() then SkinTree(w, 0) end
         end
     end)
+    scan:RegisterEvent("PLAYER_LOGIN")
+    scan:SetScript("OnEvent", function() HookAll() end)  -- every window exists by now
+    HookAll()
     end)()
 
     -- ------------------------------------------------------------ multi-select in the invite list (RebornWOW DCUI3D5)
