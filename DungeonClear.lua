@@ -7178,6 +7178,26 @@ do
         end
         if left == 0 then self:SetScript("OnUpdate", nil) end
     end)
+    -- RebornWOW DCTEST10E: the game's confirm dialogs that DungeonClear opens go one strata
+    -- up as well (they stayed at DIALOG, behind the lifted panel windows), back on close
+    local function LiftConfirm(which)
+        if type(which) ~= "string" or which:sub(1, 13) ~= "DUNGEONCLEAR_" then return end
+        for i = 1, (STATICPOPUP_NUMDIALOGS or 4) do
+            local d = _G["StaticPopup" .. i]
+            if d and d:IsShown() and d.which == which then
+                if not d.dcStrataHook then
+                    d.dcStrataHook = true
+                    d:HookScript("OnHide", function(self)
+                        if self.dcLiftedUp then self.dcLiftedUp = nil; self:SetFrameStrata("DIALOG") end
+                    end)
+                end
+                d.dcLiftedUp = true
+                d:SetFrameStrata("FULLSCREEN_DIALOG")
+                d:Raise()
+            end
+        end
+    end
+    hooksecurefunc("StaticPopup_Show", LiftConfirm)
     end)()
 
     -- ------------------------------------------------------------ panel modes (RebornWOW DCUI4A)
