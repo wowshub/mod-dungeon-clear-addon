@@ -339,6 +339,9 @@ local zh = {
     -- DCUI4A
     -- DCTEST9A
     -- DCTEST10A
+    -- DCTEST10B
+    ["Test party -- controlled by the test"] = "测试队伍：由测试控制",
+    ["Test party"] = "测试队伍",
     ["Mine"] = "我的",
     ["Only the test runs this character started."] = "只显示当前角色开的测试。",
     ["Every GM's test runs, and records from before runs were tagged with their GM."] = "所有 GM 的测试，以及还没有记录开测 GM 的旧记录。",

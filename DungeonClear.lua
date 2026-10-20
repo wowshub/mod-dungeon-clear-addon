@@ -7266,6 +7266,45 @@ do
     frame:HookScript("OnHide", function() if DCTestUndock and DCTestDocked and DCTestDocked() then DCTestUndock() end end)
     frame:HookScript("OnShow", function() if shell:IsShown() then shell.ApplyMode() end end)
     PaintButtons()
+    -- ------------------------------------------------------------ test party notice (RebornWOW DCTEST10B)
+    -- In Clear mode, a party that belongs to a running test (you joined it, or were left
+    -- in it) is not "your" party: the run controls are covered by a notice with a way to
+    -- Test mode, and the party column reads "Test party". The server says which test run
+    -- the player's party belongs to on the 5 s tier poll (TIER line, 4th field).
+    do
+        local testRun
+        local cover = CreateFrame("Frame", nil, frame)
+        cover:SetPoint("TOPLEFT", onBtn, "TOPLEFT", -3, 3)
+        cover:SetPoint("BOTTOMRIGHT", pauseBtn or skipBtn, "BOTTOMRIGHT", 3, -3)
+        cover:SetFrameLevel(onBtn:GetFrameLevel() + 6)
+        cover:EnableMouse(true)                       -- clicks never reach the run buttons
+        cover:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Buttons\\WHITE8X8",
+                            edgeSize = 1, insets = { left = 1, right = 1, top = 1, bottom = 1 } })
+        cover:SetBackdropColor(0.05, 0.06, 0.09, 0.94)
+        cover:SetBackdropBorderColor(0.91, 0.77, 0.42, 0.8)
+        local txt = cover:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        txt:SetPoint("LEFT", cover, "LEFT", 8, 0)
+        DCBind(txt, "Test party -- controlled by the test")
+        local go = SmallButton(cover, "Test mode", 64)
+        go:SetPoint("RIGHT", cover, "RIGHT", -4, 0)
+        go:SetScript("OnClick", function() DCShellSetMode("test") end)
+        cover:Hide()
+        local function Paint()
+            local inTest = testRun ~= nil and Mode() ~= "test" and not DungeonClearDB.tinyMode
+            if inTest then cover:Show() else cover:Hide() end
+            DCBind(col4.title, testRun and "Test party" or "My party")
+        end
+        local ev = CreateFrame("Frame", nil, frame)
+        ev:RegisterEvent("CHAT_MSG_ADDON")
+        ev:SetScript("OnEvent", function(_, _, prefix, msg)
+            if prefix ~= "DC" or type(msg) ~= "string" or msg:sub(1, 5) ~= "TIER\t" then return end
+            local _, _, _, run = strsplit("\t", msg)
+            testRun = (run and run ~= "" and run ~= "-") and run or nil
+            Paint()
+        end)
+        local origApply = shell.ApplyMode
+        shell.ApplyMode = function(...) origApply(...); Paint() end
+    end
     -- ------------------------------------------------------------ Test mode auto-play row (RebornWOW DCTEST9E)
     -- Joined to a test party ("Join" / "Join + god"), the auto-play question used to jump
     -- to the Clear panel's row. Test mode has its own row at the right column's foot: the
