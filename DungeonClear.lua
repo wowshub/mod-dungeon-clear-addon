@@ -3231,6 +3231,20 @@ end
         return origPlace(...)
     end
     function DCTestDocked() return docked end
+    -- RebornWOW DCUI4A2: RebornWindowScale re-applies its saved scale and UIParent
+    -- position on every show of these windows. While docked, each show re-pins them after
+    -- that hook (ours is hooked later, so it runs later); its corner grips are hidden.
+    local pins, hooked = {}, false
+    local function Pin(f) if docked and pins[f] then pins[f]() end end
+    local function Grips(f, show)
+        for _, c in ipairs({ f:GetChildren() }) do
+            local n = c.GetNormalTexture and c:GetNormalTexture()
+            local p = n and n:GetTexture()
+            if type(p) == "string" and p:find("SizeGrabber") then
+                if show then c:Show() else c:Hide() end
+            end
+        end
+    end
     function DCTestDock(hostL, hostC, hostR, view)
         if docked then return end
         docked = true
@@ -3239,6 +3253,9 @@ end
             local s = saved[key]
             s.parent, s.points, s.w, s.h = f:GetParent(), Anchors(f), f:GetWidth(), f:GetHeight()
             s.strata, s.bg = f:GetFrameStrata(), { f:GetBackdropColor() }
+            s.scale = f:GetScale()                          -- DCUI4A2
+            f:SetScale(1)
+            Grips(f, false)
             s.border = { f:GetBackdropBorderColor() }
             f:SetParent(view)
             f:SetFrameStrata(view:GetFrameStrata())
@@ -3279,8 +3296,31 @@ end
                 end
             end
         end
+        -- DCUI4A2: the docked place, re-applied after any other addon's OnShow
+        pins[tf] = function()
+            tf:SetParent(view); tf:SetScale(1)
+            tf:SetFrameStrata(view:GetFrameStrata()); tf:SetFrameLevel(view:GetFrameLevel() + 4)
+            tf:ClearAllPoints()
+            tf:SetPoint("TOPLEFT", hostC, "TOPLEFT", 0, 0)
+            tf:SetPoint("BOTTOMRIGHT", hostC, "BOTTOMRIGHT", 0, 0)
+            Grips(tf, false)
+        end
+        pins[lf] = function()
+            lf:SetParent(view); lf:SetScale(1)
+            lf:SetFrameStrata(view:GetFrameStrata()); lf:SetFrameLevel(view:GetFrameLevel() + 4)
+            lf:ClearAllPoints()
+            lf:SetPoint("TOPLEFT", hostL, "TOPLEFT", 0, 0)
+            lf:SetSize(hostL:GetWidth(), 300)
+            Grips(lf, false)
+        end
+        if not hooked then
+            hooked = true
+            tf:HookScript("OnShow", function() Pin(tf) end)
+            lf:HookScript("OnShow", function() Pin(lf) end)
+        end
         if not tf:IsShown() then tf:Show() end
         lf:Show()
+        Pin(tf); Pin(lf)
     end
     function DCTestUndock()
         if not docked then return end
@@ -3295,14 +3335,23 @@ end
             f:RegisterForDrag("LeftButton")
             f:SetBackdropColor(unpack(s.bg))
             f:SetBackdropBorderColor(unpack(s.border))
+            if s.scale then f:SetScale(s.scale) end       -- DCUI4A2
+            Grips(f, true)
         end
         tclose:Show(); lClose:Show()
         tf:Hide()                            -- leaving Test mode closes the test windows
         saved = nil
     end
     -- Esc / a close button while docked: back to the Clear mode
+    -- DCUI4A2: judged one frame later -- CopySettings refreshes with Hide(); Show()
+    local later = CreateFrame("Frame")
+    later:Hide()
+    later:SetScript("OnUpdate", function(self)
+        self:Hide()
+        if docked and not tf:IsShown() and DCShellSetMode then DCShellSetMode("clear") end
+    end)
     tf:HookScript("OnHide", function()
-        if docked and DCShellSetMode then DCShellSetMode("clear") end
+        if docked then later:Show() end
     end)
     end)()
 end)()
