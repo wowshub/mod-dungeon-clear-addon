@@ -15,6 +15,22 @@ local MAX_CARDS = 10
 local CARD_H, CARD_GAP, CARD_W = 80, 6, 624
 
 local function IsZh() return DCLoc and DCLoc.IsZh and DCLoc.IsZh() end
+
+-- DCPREP2C: the name column ends where the item-level block starts
+local NAME_W = 112
+-- put `text` into `fs` so that it is at most `maxw` wide; returns true when it had to be cut
+local function Fit(fs, text, maxw)
+    text = text or ""
+    fs:SetText(text)
+    if fs:GetStringWidth() <= maxw then return false end
+    local cut = text
+    while #cut > 0 do
+        cut = cut:gsub("[%z\1-\127\194-\244][\128-\191]*$", "")  -- drop the last whole UTF-8 character
+        fs:SetText(cut .. "...")
+        if fs:GetStringWidth() <= maxw then break end
+    end
+    return true
+end
 local function T(zh, en) if IsZh() then return zh end return en end
 
 -- ------------------------------------------------------------------ data
@@ -259,6 +275,17 @@ function U.MakeCard(parent, i)
     card.role:SetTexCoord(0.07, 0.93, 0.07, 0.93)
     card.name = card:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     card.name:SetPoint("TOPLEFT", card.class, "TOPRIGHT", 12, 0); card.name:SetJustifyH("LEFT")
+    card.nameHit = CreateFrame("Frame", nil, card)  -- DCPREP2C: hover shows the whole name
+    card.nameHit:SetPoint("TOPLEFT", card.name, "TOPLEFT", 0, 0)
+    card.nameHit:SetSize(NAME_W, 34)
+    card.nameHit:EnableMouse(true)
+    card.nameHit:SetScript("OnEnter", function(self)
+        if not self.full then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(self.full)
+        GameTooltip:Show()
+    end)
+    card.nameHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
     card.sub = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     card.sub:SetPoint("TOPLEFT", card.name, "BOTTOMLEFT", 0, -2); card.sub:SetJustifyH("LEFT"); card.sub:SetTextColor(0.6, 0.65, 0.72)
     card.warn = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -331,9 +358,14 @@ function U.PaintCard(card, r, ref, refIsTier, index)
     Fill(card.stripe, cr, cg, cb, 1)
     U.SetClassIcon(card.class, r.class)
     card.role:SetTexture(U.SpellIcon(STAT_ICON["role_" .. (r.role or "dps")] or STAT_ICON.role_dps))
-    card.name:SetText(r.name); card.name:SetTextColor(cr, cg, cb)
+    local cut = Fit(card.name, r.name, NAME_W)
+    card.name:SetTextColor(cr, cg, cb)
+    card.nameHit.full = cut and r.name or nil
     local roleText = (r.role == "tank" and T("坦克", "Tank")) or (r.role == "heal" and T("治疗", "Healer")) or T("输出", "DPS")
     card.sub:SetText(roleText .. "  " .. (r.npcBot and "|cff9fd8ffNPCBot|r" or (r.talents or "")) .. "  Lv" .. (r.level or 0))
+    if card.sub:GetStringWidth() > NAME_W + 10 then  -- a long role + talents line must not reach the item level either
+        card.sub:SetText(roleText .. "  " .. (r.npcBot and "|cff9fd8ffNPCBot|r" or "") .. "  Lv" .. (r.level or 0))
+    end
 
     -- item level: the number counts up, the bar and colour say how it compares
     local v = r.ilvl or 0
