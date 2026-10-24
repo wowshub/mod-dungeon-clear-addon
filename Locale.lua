@@ -344,6 +344,8 @@ local zh = {
     -- DCBOSS1A
     -- DCBOSS1B
     -- DCBOSS1C
+    -- DCPREP1B
+    ["Readiness"] = "准备度",
     -- DCUI4B2
     ["Big"] = "大",
     ["Small"] = "小",

@@ -592,6 +592,9 @@ local function SendDcCommand(subCmd, param, silent)
     end
 end
 
+-- RebornWOW DCPREP1B: the readiness panel (DungeonClearPrep.lua) sends its "prep" command through here
+DungeonClearSendCommand = SendDcCommand
+
 -- RebornWOW DCGM3A: the panel's GM dot-commands. A dead player cannot speak ("You cannot speak
 -- while dead!") but may use the addon channel: the server runs the text for him (command "gmcmd").
 function DCGmCommand(cmd)
@@ -1513,6 +1516,20 @@ do
         GameTooltip:Show()
     end)
     gpsBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- RebornWOW DCPREP1B: the readiness panel, left of the coordinate button
+    local prepBtn = CreateFrame("Button", "DungeonClearHeaderPrepButton", frame, "UIPanelButtonTemplate")
+    prepBtn:SetSize(52, 20)
+    prepBtn:SetPoint("RIGHT", gpsBtn, "LEFT", -2, 0)
+    DCBind(prepBtn, "Readiness")
+    prepBtn:SetScript("OnClick", function() if DungeonClearTogglePrep then DungeonClearTogglePrep() end end)
+    prepBtn:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:AddLine(DCL("Readiness"))
+        GameTooltip:Show()
+    end)
+    prepBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    gpsBtn:HookScript("OnShow", function() prepBtn:Show() end)
+    gpsBtn:HookScript("OnHide", function() prepBtn:Hide() end)
 end
 -- A function rather than a do-block: its locals then count against its own 200-local
 -- limit instead of the main chunk's, which this file is close to.
@@ -2904,6 +2921,9 @@ end
                     SendDcCommand("testinfo", run.id, true)
                 end
             end },
+            { text = DCL("Readiness"), notCheckable = true, func = function()  -- DCPREP1B
+                if DungeonClearOpenPrep then DungeonClearOpenPrep(run.id) end
+            end },
             ReplayMenu(run),  -- DCGM1B2: pick the cheat tier
             { text = DCL("Copy its settings to the left"), notCheckable = true, func = function() CopySettings(run) end },
             { text = "|cffff3333" .. DCL("Delete this record") .. "|r", notCheckable = true, func = function()
@@ -2956,6 +2976,9 @@ end
               disabled = #follow == 0 },
             { text = DCL("Run stats"), notCheckable = true,
               func = function() SendDcCommand("testinfo", run.id, true) end },
+            { text = DCL("Readiness"), notCheckable = true, func = function()  -- DCPREP1B
+                if DungeonClearOpenPrep then DungeonClearOpenPrep(run.id) end
+            end },
             ReplayMenu(run),  -- DCGM1B2: pick the cheat tier
             TierMenu(run),    -- DCGM1B2: switch this run's tier now
             { text = DCL("Copy its settings to the left"), notCheckable = true, func = function() CopySettings(run) end },
