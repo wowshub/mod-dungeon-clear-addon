@@ -1320,8 +1320,14 @@ RedrawBossList = function()
         row.eventNoteFull = nil
         row.text:ClearAllPoints()
         row.text:SetPoint("LEFT", row, "LEFT", 8, 0)
-        row.text:SetText(DCL("Loading boss list..."))
-        row.text:SetTextColor(0.6, 0.6, 0.6)
+        -- DCNPC1A: a recent "no tank bot" answer is the real reason the list stays empty
+        if DCStats and DCStats.noTankAt and GetTime() - DCStats.noTankAt < 20 then
+            row.text:SetText(DCStats.T("队伍里没有坦克机器人，清本无法开始。NPCBot 不能带队。", "No tank playerbot in the party. NPCBots cannot lead the clear."))
+            row.text:SetTextColor(1, 0.45, 0.35)
+        else
+            row.text:SetText(DCL("Loading boss list..."))
+            row.text:SetTextColor(0.6, 0.6, 0.6)
+        end
         row.sub:Hide()
         row.status:SetText("")
         row.goBtn:Hide()
@@ -4730,7 +4736,8 @@ do
     -- for a class we know.
     local CLASS_BY_ID = { [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE", [5] = "PRIEST",
                           [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE", [9] = "WARLOCK", [11] = "DRUID",
-                          [13] = "WITCHDOCTOR", [14] = "MONK" }
+                          [13] = "WITCHDOCTOR", [14] = "MONK",
+                          [21] = "WITCHDOCTOR" }  -- DCNPC1A: the NPCBot witch doctor reports its bot class 21
     local CUSTOM_ICON = {
         WITCHDOCTOR = { "Interface\\AddOns\\RebornWitchDoctorTalents\\Art\\UI-CHARACTERCREATE-CLASSES-ROUND", 0.75, 0.875, 0.75, 1.0 },
         WITCH_DOCTOR = { "Interface\\AddOns\\RebornWitchDoctorTalents\\Art\\UI-CHARACTERCREATE-CLASSES-ROUND", 0.75, 0.875, 0.75, 1.0 },
@@ -8268,6 +8275,10 @@ local function OnAddonMessage(prefix, message, channel, sender)
         -- the player on every poll. We only act on it during a live clear: if we
         -- still think DC is active, the tank left mid-run, so revert to OFF
         -- (one-shot, since this flips isDCOn false) and say so once.
+        if DCStats and not isDCOn then  -- DCNPC1A
+            DCStats.noTankAt = GetTime()
+            if RedrawBossList then RedrawBossList() end
+        end
         if isDCOn then
             UpdateStatusUI("0", nil, "off", nil)
             DEFAULT_CHAT_FRAME:AddMessage(DCL("|cffff3333[DC] Tank bot is no longer in the group \226\128\148 dungeon clear turned off.|r"))
