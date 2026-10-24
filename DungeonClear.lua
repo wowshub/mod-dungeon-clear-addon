@@ -6242,14 +6242,24 @@ do
         elseif kind == "MR_END" then
             R.Render()
         elseif kind == "MRX" then
-            local _, id, what, a, b, c, d = strsplit("\t", msg)
+            local _, id, what, a, b, c, d, e, f = strsplit("\t", msg)
             local det = pendingDetail[id]
-            if not det then det = { members = {}, bosses = {}, deaths = {} }; pendingDetail[id] = det end
+            if not det then det = { members = {}, bosses = {}, deaths = {}, ilvl = {}, taken = {}, healers = {} }; pendingDetail[id] = det end
             if what == "R" then det.reason = a
             elseif what == "S" then det.restarts = tonumber(a) or 0
             elseif what == "M" then det.members[#det.members + 1] = { name = a, cls = tonumber(b) or 0, level = tonumber(c) or 0, kind = d }
             elseif what == "B" then det.bosses[#det.bosses + 1] = { t = tonumber(a) or 0, name = b }
-            elseif what == "D" then det.deaths[#det.deaths + 1] = { t = tonumber(a) or 0, name = b } end
+            elseif what == "D" then det.deaths[#det.deaths + 1] = { t = tonumber(a) or 0, name = b }
+            -- DCSTAT2A: item level / role, the cause of the death just listed, damage taken, healing done
+            elseif what == "I" then det.ilvl[a] = { ilvl = tonumber(b) or 0, role = c }
+            elseif what == "K" then
+                local last = det.deaths[#det.deaths]
+                if last then
+                    last.killer, last.spell = a, b
+                    last.amount, last.overkill, last.dmg5, last.heal5 = tonumber(c), tonumber(d), tonumber(e), tonumber(f)
+                end
+            elseif what == "T" then det.taken[#det.taken + 1] = { src = a, spell = b, total = tonumber(c) or 0, hits = tonumber(d) or 0 }
+            elseif what == "H" then det.healers[#det.healers + 1] = { name = a, total = tonumber(b) or 0 } end
         elseif kind == "MRX_END" then
             local id = msg:match("^MRX_END\t(.*)$")
             local det = pendingDetail[id]
@@ -6265,12 +6275,13 @@ do
         for _, x in ipairs(Store().list) do if x.id == id then d = x end end
         if not d or not DCStats then return end
         det = det or { members = {}, bosses = {}, deaths = {} }
+        det.ilvl, det.taken, det.healers = det.ilvl or {}, det.taken or {}, det.healers or {}
         local ZT = DCStats.T
         local green, red, yellow, grey = { 0.25, 0.88, 0.38 }, { 1.0, 0.31, 0.28 }, { 1.0, 0.82, 0.0 }, { 0.55, 0.60, 0.66 }
         local RCOL = { clear = green, wipe = red, death = { 1.0, 0.59, 0.16 }, running = yellow }
         local res = RESULT[d.result] or RESULT["end"]
         local t = TIER[d.tier] or TIER.normal
-        local m = { key = "clear:" .. id, mode = "clear", bosses = {}, deaths = {}, party = {}, notes = {} }
+        local m = { key = "clear:" .. id, mode = "clear", bosses = {}, deaths = {}, party = {}, taken = {}, notes = {} }
         m.title = DCLDungeon(d.name)
         m.heroic = d.heroic
         m.result = { text = DCL(res[1]), rgb = RCOL[d.result] or grey }
@@ -6287,10 +6298,15 @@ do
         local cls, deathsBy = {}, {}
         for _, e in ipairs(det.deaths) do deathsBy[e.name] = (deathsBy[e.name] or 0) + 1 end
         local me = UnitName("player")
+        local healBy = {}
+        for _, h in ipairs(det.healers) do healBy[h.name] = h.total end
         for _, mem in ipairs(det.members) do
             cls[mem.name] = mem.cls
+            local iv = det.ilvl[mem.name]
             m.party[#m.party + 1] = { name = mem.name, classId = mem.cls, kind = DCL(KIND[mem.kind] or "real player"),
-                                      deaths = deathsBy[mem.name] or 0, me = (mem.name == me) }
+                                      deaths = deathsBy[mem.name] or 0, me = (mem.name == me),
+                                      ilvl = iv and iv.ilvl > 0 and iv.ilvl or nil, role = iv and iv.role ~= "" and iv.role or nil,
+                                      heal = healBy[mem.name] }
         end
         local prev = 0
         for _, e in ipairs(det.bosses) do
@@ -6301,11 +6317,19 @@ do
             m.bosses[#m.bosses + 1] = { name = ZT("未击杀", "not killed"), status = "alive" }
         end
         for _, e in ipairs(det.deaths) do
-            m.deaths[#m.deaths + 1] = { t = e.t, name = e.name, classId = cls[e.name] }
+            m.deaths[#m.deaths + 1] = { t = e.t, name = e.name, classId = cls[e.name], killer = e.killer or "",
+                                        spell = e.spell, amount = e.amount, overkill = e.overkill, dmg5 = e.dmg5, heal5 = e.heal5 }
+        end
+        for _, t in ipairs(det.taken) do
+            m.taken[#m.taken + 1] = { src = t.src, spell = t.spell, total = t.total, hits = t.hits }
         end
         if det.reason and det.reason ~= "" then m.notes[#m.notes + 1] = DCLDetail(det.reason) end
-        m.notes[#m.notes + 1] = ZT("装等、输出、承伤、死亡原因等更详细的数据，之后的版本才开始记录。",
-                                    "Item level, damage, damage taken and death causes are recorded from a later version.")
+        if #det.taken == 0 and next(det.ilvl) == nil then
+            m.notes[#m.notes + 1] = ZT("这局是在装等、承伤、死亡原因开始记录之前打的，所以没有这些数据。",
+                                        "This run was recorded before item level, damage taken and death causes were tracked.")
+        else
+            m.notes[#m.notes + 1] = ZT("输出量暂未记录，之后的版本加入。", "Damage done is not recorded yet; it comes in a later version.")
+        end
         DCStats.Open(m)
     end
 
