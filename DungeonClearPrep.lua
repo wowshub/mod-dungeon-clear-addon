@@ -20,7 +20,7 @@ local function T(zh, en) if IsZh() then return zh end return en end
 -- ------------------------------------------------------------------ data
 local CLASS_BY_ID = { [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE", [5] = "PRIEST",
                       [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE", [9] = "WARLOCK", [11] = "DRUID",
-                      [13] = "WITCHDOCTOR", [14] = "MONK" }
+                      [13] = "WITCHDOCTOR", [14] = "MONK", [21] = "WITCHDOCTOR" }
 local CUSTOM_ICON = {
     WITCHDOCTOR = { "Interface\\AddOns\\RebornWitchDoctorTalents\\Art\\UI-CHARACTERCREATE-CLASSES-ROUND", 0.75, 0.875, 0.75, 1.0 },
     MONK = { "Interface\\Glues\\CharacterCreate\\Reborn-Monk-Classes", 0.125, 0.25, 0, 0.125 },
@@ -81,6 +81,11 @@ local function Short(n)
     return tostring(math.floor(n + 0.5))
 end
 local function Pct(v) return string.format("%.1f%%", tonumber(v) or 0) end
+-- DCPREP2A: an NPCBot that needs no hit rating reports 100; say so instead of "100.0%"
+local function HitText(v, bot)
+    if bot and (v or 0) >= 99.9 then return T("已满", "capped") end
+    return Pct(v)
+end
 
 -- ------------------------------------------------------------------ colours
 function U.IlvlRGB(v, ref)
@@ -126,13 +131,13 @@ function U.Chips(r)
         local phys = math.max(st.ap or 0, st.rap or 0)
         if (st.sp or 0) > phys then
             add("sp", Short(st.sp)); add("crit", Pct(st.scrit))
-            add("hit", Pct(st.shit), Grade(st.shit or 0, HIT_CAP.spell - 0.3, HIT_CAP.spell * 0.7))
+            add("hit", HitText(st.shit, r.npcBot), Grade(st.shit or 0, HIT_CAP.spell - 0.3, HIT_CAP.spell * 0.7))
             add("haste", Pct(st.haste)); add("hp", Short(st.hp))
         else
             add("ap", Short(hunter and (st.rap or 0) or (st.ap or 0)))
             add("crit", Pct(hunter and st.rcrit or st.crit))
             local hit = hunter and (st.rhit or 0) or (st.hit or 0)
-            add("hit", Pct(hit), Grade(hit, HIT_CAP.melee - 0.3, HIT_CAP.melee * 0.7))
+            add("hit", HitText(hit, r.npcBot), Grade(hit, HIT_CAP.melee - 0.3, HIT_CAP.melee * 0.7))
             add("haste", Pct(st.haste))
             if hunter then add("hp", Short(st.hp))
             else add("expertise", tostring(st.expertise or 0), Grade(st.expertise or 0, EXPERTISE_CAP, EXPERTISE_CAP * 0.6)) end
@@ -174,6 +179,7 @@ function U.Handle(message)
         r.class, r.level, r.role = N(p[3]), N(p[4]), p[5] or "dps"
         r.ilvl, r.minIlvl, r.empty, r.dur = N(p[6]), N(p[7]), N(p[8]), N(p[9])
         r.needPet, r.hasPet, r.talents = p[10] == "1", p[11] == "1", p[12] or ""
+        r.npcBot = p[13] == "n"  -- DCPREP2A
     elseif kind == "PRP_S" then
         local r = Row(p[2])
         r.st = { hp = N(p[3]), mana = N(p[4]), powerType = N(p[5]), armor = N(p[6]), ap = N(p[7]), rap = N(p[8]),
@@ -327,7 +333,7 @@ function U.PaintCard(card, r, ref, refIsTier, index)
     card.role:SetTexture(U.SpellIcon(STAT_ICON["role_" .. (r.role or "dps")] or STAT_ICON.role_dps))
     card.name:SetText(r.name); card.name:SetTextColor(cr, cg, cb)
     local roleText = (r.role == "tank" and T("坦克", "Tank")) or (r.role == "heal" and T("治疗", "Healer")) or T("输出", "DPS")
-    card.sub:SetText(roleText .. "  " .. (r.talents or "") .. "  Lv" .. (r.level or 0))
+    card.sub:SetText(roleText .. "  " .. (r.npcBot and "|cff9fd8ffNPCBot|r" or (r.talents or "")) .. "  Lv" .. (r.level or 0))
 
     -- item level: the number counts up, the bar and colour say how it compares
     local v = r.ilvl or 0
@@ -379,6 +385,9 @@ function U.PaintCard(card, r, ref, refIsTier, index)
     U.PaintSlot(card.slots[2], foodBuff, st.W, 43015, T("食物", "Food"))
     U.PaintSlot(card.slots[3], nil, st.H, 33447, T("治疗药水", "Health potion"))
     U.PaintSlot(card.slots[4], nil, st.M, 33448, T("法力药水", "Mana potion"))
+    for k = 3, 4 do  -- DCPREP2A
+        if r.npcBot then card.slots[k]:Hide() else card.slots[k]:Show() end
+    end
 
     -- the small red flags: empty slots, worn-out gear, no pet
     local flags = {}
