@@ -2527,19 +2527,107 @@ end
     gearBox:Hide()
 
     -- Run stats share the bottom box with the gear list (DCTEST3A).
-    local statsBox = CreateFrame("ScrollingMessageFrame", nil, lf)
-    statsBox:SetPoint("TOPLEFT", gearBox, "TOPLEFT", 6, -4)
-    statsBox:SetPoint("BOTTOMRIGHT", gearBox, "BOTTOMRIGHT", -6, 4)
-    statsBox:SetFontObject(GameFontHighlightSmall)
-    statsBox:SetJustifyH("LEFT")
-    statsBox:SetFading(false)
-    statsBox:SetMaxLines(200)
-    statsBox:SetInsertMode("TOP")
-    statsBox:EnableMouseWheel(true)
-    statsBox:SetScript("OnMouseWheel", function(self, delta)
-        if delta > 0 then self:ScrollUp() else self:ScrollDown() end
-    end)
-    statsBox:Hide()
+    -- DCUI4B4: a ScrollFrame with one FontString, arrows and a slider. The refresh (every 15 s and on
+    -- each stats message) used to Clear() and refill a ScrollingMessageFrame, which threw the wheel
+    -- position away; now it keeps the scroll (clamped to the new height) for the same run.
+    -- statsBox keeps the three calls RenderStats makes: Clear(), AddMessage(line) (bottom-up, as it
+    -- was inserted at the top), and Flush(runKey) at the end; Show/Hide are the holder's own.
+    local statsBox
+    do
+        local holder = CreateFrame("Frame", nil, lf)
+        holder:SetPoint("TOPLEFT", gearBox, "TOPLEFT", 6, -4)
+        holder:SetPoint("BOTTOMRIGHT", gearBox, "BOTTOMRIGHT", -6, 4)
+        local sf = CreateFrame("ScrollFrame", nil, holder)
+        sf:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
+        sf:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", -18, 0)
+        local content = CreateFrame("Frame", nil, sf)
+        content:SetSize(340, 10)
+        sf:SetScrollChild(content)
+        local fs = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+        fs:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
+        fs:SetWidth(340)
+        fs:SetJustifyH("LEFT")
+        fs:SetJustifyV("TOP")
+        local up = CreateFrame("Button", nil, holder, "UIPanelScrollUpButtonTemplate")
+        up:SetSize(16, 16)
+        up:SetPoint("TOPRIGHT", holder, "TOPRIGHT", 0, 0)
+        local down = CreateFrame("Button", nil, holder, "UIPanelScrollDownButtonTemplate")
+        down:SetSize(16, 16)
+        down:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
+        local bar = CreateFrame("Slider", nil, holder)
+        bar:SetOrientation("VERTICAL")
+        bar:SetWidth(16)
+        bar:SetPoint("TOP", up, "BOTTOM", 0, 0)
+        bar:SetPoint("BOTTOM", down, "TOP", 0, 0)
+        bar:SetThumbTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
+        local track = bar:CreateTexture(nil, "BACKGROUND")
+        track:SetAllPoints()
+        track:SetTexture(0, 0, 0, 0.35)
+        bar:SetMinMaxValues(0, 0)
+        bar:SetValueStep(1)
+        bar:SetValue(0)
+        local STEP = 36  -- three lines
+        local syncing = false
+
+        -- the scrollable range from the text's height and the viewport's; returns the max
+        local function Sync(want)
+            local view = sf:GetHeight() or 0
+            if view <= 0 then view = holder:GetHeight() or 0 end
+            local max = math.max(0, math.ceil((fs:GetStringHeight() or 0) - view))
+            content:SetHeight(math.max(10, (fs:GetStringHeight() or 0) + 2))
+            local v = math.max(0, math.min(want or sf:GetVerticalScroll() or 0, max))
+            syncing = true
+            bar:SetMinMaxValues(0, max)
+            bar:SetValue(v)
+            syncing = false
+            sf:SetVerticalScroll(v)
+            return max
+        end
+        bar:SetScript("OnValueChanged", function(_, value)
+            if syncing then return end
+            sf:SetVerticalScroll(value)
+        end)
+        local function Wheel(_, delta)
+            local lo, hi = bar:GetMinMaxValues()
+            bar:SetValue(math.max(lo, math.min(hi, bar:GetValue() - delta * STEP)))
+        end
+        holder:EnableMouseWheel(true)
+        holder:SetScript("OnMouseWheel", Wheel)
+        sf:EnableMouseWheel(true)
+        sf:SetScript("OnMouseWheel", Wheel)
+        up:SetScript("OnClick", function() Wheel(nil, 1) end)
+        down:SetScript("OnClick", function() Wheel(nil, -1) end)
+        -- sizes are only known once the frame is laid out and shown
+        holder:SetScript("OnShow", function() Sync() end)
+        sf:SetScript("OnSizeChanged", function(self, w)
+            if w and w > 20 then
+                content:SetWidth(w)
+                fs:SetWidth(w)
+            end
+            Sync()
+        end)
+
+        function holder.Clear(self)
+            self.lines = {}
+            self.keep = sf:GetVerticalScroll() or 0
+            fs:SetText("")
+        end
+        function holder.AddMessage(self, line)
+            self.lines = self.lines or {}
+            table.insert(self.lines, 1, line)  -- the caller adds bottom-up
+        end
+        -- runKey: the same run keeps its scroll position, another run starts at the top
+        function holder.Flush(self, runKey)
+            if runKey ~= self.runKey then
+                self.runKey = runKey
+                self.keep = 0
+            end
+            fs:SetText(table.concat(self.lines or {}, "\n"))
+            Sync(self.keep or 0)
+        end
+        holder:Hide()
+        statsBox = holder
+    end
 
     local QUALITY_NAMES = { [1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic", [5] = "Legendary" }
     local function FindRun(id)
@@ -2682,6 +2770,7 @@ end
             end
         end
         for i = #lines, 1, -1 do statsBox:AddMessage(lines[i]) end
+        statsBox:Flush(info.id)  -- DCUI4B4: keeps the scroll position while the same run refreshes
     end
 
     local runMenuFrame = CreateFrame("Frame", "DungeonClearTestRunMenu", UIParent, "UIDropDownMenuTemplate")
