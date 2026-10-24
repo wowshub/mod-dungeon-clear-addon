@@ -89,7 +89,7 @@ end
 
 local CLASS_BY_ID = { [1] = "WARRIOR", [2] = "PALADIN", [3] = "HUNTER", [4] = "ROGUE", [5] = "PRIEST",
                       [6] = "DEATHKNIGHT", [7] = "SHAMAN", [8] = "MAGE", [9] = "WARLOCK", [11] = "DRUID",
-                      [13] = "WITCHDOCTOR", [14] = "MONK" }
+                      [13] = "WITCHDOCTOR", [14] = "MONK", [21] = "WITCHDOCTOR" }  -- DCSTAT2B: NPCBot witch doctor (bot class 21)
 local CUSTOM_ICON = {
     WITCHDOCTOR = { "Interface\\AddOns\\RebornWitchDoctorTalents\\Art\\UI-CHARACTERCREATE-CLASSES-ROUND", 0.75, 0.875, 0.75, 1.0 },
     MONK = { "Interface\\Glues\\CharacterCreate\\Reborn-Monk-Classes", 0.125, 0.25, 0, 0.125 },
