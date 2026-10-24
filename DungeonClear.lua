@@ -2544,103 +2544,17 @@ end
     gearBox:Hide()
 
     -- Run stats share the bottom box with the gear list (DCTEST3A).
-    -- DCUI4B4: a ScrollFrame with one FontString, arrows and a slider. The refresh (every 15 s and on
-    -- each stats message) used to Clear() and refill a ScrollingMessageFrame, which threw the wheel
-    -- position away; now it keeps the scroll (clamped to the new height) for the same run.
-    -- statsBox keeps the three calls RenderStats makes: Clear(), AddMessage(line) (bottom-up, as it
-    -- was inserted at the top), and Flush(runKey) at the end; Show/Hide are the holder's own.
+    -- RebornWOW DCSTAT1A: the run statistics are a DCStats view (layered, coloured, folding sections) fed by
+    -- capture.statsModel(); the old text box and its scroll bar (DCUI4B4) are gone. statsBox is the frame that
+    -- hosts the embedded view; the view needs DungeonClearStats.lua (loaded before this file).
     local statsBox
     do
         local holder = CreateFrame("Frame", nil, lf)
         holder:SetPoint("TOPLEFT", gearBox, "TOPLEFT", 6, -4)
         holder:SetPoint("BOTTOMRIGHT", gearBox, "BOTTOMRIGHT", -6, 4)
-        local sf = CreateFrame("ScrollFrame", nil, holder)
-        sf:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
-        sf:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", -18, 0)
-        local content = CreateFrame("Frame", nil, sf)
-        content:SetSize(340, 10)
-        sf:SetScrollChild(content)
-        local fs = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-        fs:SetPoint("TOPLEFT", content, "TOPLEFT", 0, 0)
-        fs:SetWidth(340)
-        fs:SetJustifyH("LEFT")
-        fs:SetJustifyV("TOP")
-        local up = CreateFrame("Button", nil, holder, "UIPanelScrollUpButtonTemplate")
-        up:SetSize(16, 16)
-        up:SetPoint("TOPRIGHT", holder, "TOPRIGHT", 0, 0)
-        local down = CreateFrame("Button", nil, holder, "UIPanelScrollDownButtonTemplate")
-        down:SetSize(16, 16)
-        down:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
-        local bar = CreateFrame("Slider", nil, holder)
-        bar:SetOrientation("VERTICAL")
-        bar:SetWidth(16)
-        bar:SetPoint("TOP", up, "BOTTOM", 0, 0)
-        bar:SetPoint("BOTTOM", down, "TOP", 0, 0)
-        bar:SetThumbTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
-        local track = bar:CreateTexture(nil, "BACKGROUND")
-        track:SetAllPoints()
-        track:SetTexture(0, 0, 0, 0.35)
-        bar:SetMinMaxValues(0, 0)
-        bar:SetValueStep(1)
-        bar:SetValue(0)
-        local STEP = 36  -- three lines
-        local syncing = false
-
-        -- the scrollable range from the text's height and the viewport's; returns the max
-        local function Sync(want)
-            local view = sf:GetHeight() or 0
-            if view <= 0 then view = holder:GetHeight() or 0 end
-            local max = math.max(0, math.ceil((fs:GetStringHeight() or 0) - view))
-            content:SetHeight(math.max(10, (fs:GetStringHeight() or 0) + 2))
-            local v = math.max(0, math.min(want or sf:GetVerticalScroll() or 0, max))
-            syncing = true
-            bar:SetMinMaxValues(0, max)
-            bar:SetValue(v)
-            syncing = false
-            sf:SetVerticalScroll(v)
-            return max
-        end
-        bar:SetScript("OnValueChanged", function(_, value)
-            if syncing then return end
-            sf:SetVerticalScroll(value)
-        end)
-        local function Wheel(_, delta)
-            local lo, hi = bar:GetMinMaxValues()
-            bar:SetValue(math.max(lo, math.min(hi, bar:GetValue() - delta * STEP)))
-        end
-        holder:EnableMouseWheel(true)
-        holder:SetScript("OnMouseWheel", Wheel)
-        sf:EnableMouseWheel(true)
-        sf:SetScript("OnMouseWheel", Wheel)
-        up:SetScript("OnClick", function() Wheel(nil, 1) end)
-        down:SetScript("OnClick", function() Wheel(nil, -1) end)
-        -- sizes are only known once the frame is laid out and shown
-        holder:SetScript("OnShow", function() Sync() end)
-        sf:SetScript("OnSizeChanged", function(self, w)
-            if w and w > 20 then
-                content:SetWidth(w)
-                fs:SetWidth(w)
-            end
-            Sync()
-        end)
-
-        function holder.Clear(self)
-            self.lines = {}
-            self.keep = sf:GetVerticalScroll() or 0
-            fs:SetText("")
-        end
-        function holder.AddMessage(self, line)
-            self.lines = self.lines or {}
-            table.insert(self.lines, 1, line)  -- the caller adds bottom-up
-        end
-        -- runKey: the same run keeps its scroll position, another run starts at the top
-        function holder.Flush(self, runKey)
-            if runKey ~= self.runKey then
-                self.runKey = runKey
-                self.keep = 0
-            end
-            fs:SetText(table.concat(self.lines or {}, "\n"))
-            Sync(self.keep or 0)
+        if DCStats then
+            holder.view = DCStats.NewView(holder, 336, { compact = true })
+            holder.view.holder:SetAllPoints(holder)
         end
         holder:Hide()
         statsBox = holder
@@ -2688,106 +2602,126 @@ end
         return fallback or ""
     end
 
+    -- RebornWOW DCSTAT1A: Test mode's run statistics -> the model of the shared DCStats view.
+    -- (a field of `capture`, not a local: this function is close to Lua's 200-local limit)
+    capture.statsModel = function(info, run)
+        local ZT = DCStats.T
+        local green, red, yellow, white = { 0.25, 0.88, 0.38 }, { 1.0, 0.31, 0.28 }, { 1.0, 0.82, 0.0 }, { 0.91, 0.93, 0.96 }
+        local m = { key = info.id, mode = "test", bosses = {}, deaths = {}, party = {}, taken = {}, healers = {},
+                    conditions = {}, tech = {}, notes = {} }
+        m.title = run and DungeonName(run.token) or info.id
+        m.heroic = run and run.heroic or false
+        local rr = run and run.result
+        if rr == "success" then m.result = { text = DCL("Passed"), rgb = green }
+        elseif run and run.finished and rr and rr ~= "" then m.result = { text = DCL(RESULT_NAMES[rr] or rr), rgb = red }
+        elseif run and not run.finished then m.result = { text = ZT("进行中", "Running"), rgb = yellow } end
+        local function Plain(s) return (s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("^%s+", ""):gsub("%s+$", "")) end
+        if run then
+            local parts = {}
+            parts[#parts + 1] = ZT("种子 ", "seed ") .. (run.roster and ZT("我的角色", "my characters") or tostring(run.seed or 0))
+            parts[#parts + 1] = ZT("装等 ", "gear ") .. (((run.gearIlvl or 0) > 0) and ("<=" .. run.gearIlvl) or ZT("不限", "any"))
+            local tag = Plain(TierTag(run.tier))
+            if tag ~= "" then parts[#parts + 1] = tag end
+            m.subline = table.concat(parts, "   ")
+            if (run.gearIlvl or 0) > 0 then m.refIlvl = run.gearIlvl end
+            local killed, total = run.killed or 0, run.total or 0
+            m.tiles = {
+                { label = ZT("首领", "Bosses"), value = string.format("%d/%d", killed, total),
+                  rgb = (total > 0 and killed >= total) and green or white, frac = total > 0 and (killed / total) or 0 },
+                { label = ZT("用时", "Time"), value = Clock(run.elapsed) },
+                { label = ZT("死亡", "Deaths"), value = tostring(#info.deaths > 0 and #info.deaths or (run.deaths or 0)),
+                  rgb = ((#info.deaths > 0 and #info.deaths or (run.deaths or 0)) > 0) and red or green },
+                { label = ZT("拉怪", "Pulls"), value = tostring(run.pulls or 0) },
+            }
+            local tier = run.tier
+            if tier and tier ~= "" and tier ~= "-" and tier ~= "normal" then
+                m.conditions[#m.conditions + 1] = ZT("作弊档 ", "Cheat tier ") .. tag
+            end
+            if (run.cheats or 0) > 0 then m.conditions[#m.conditions + 1] = ZT("GM 操作 ", "GM actions ") .. run.cheats end
+            if (run.regroups or 0) > 0 then m.conditions[#m.conditions + 1] = ZT("入口复活 ", "Entrance revives ") .. run.regroups end
+        else
+            m.tiles = { { label = ZT("用时", "Time"), value = "-" } }
+        end
+
+        -- name -> class / role
+        local who = {}
+        for _, mem in ipairs(run and run.members or {}) do who[mem.name] = mem end
+        local healBy = {}
+        for _, h in ipairs(info.heals or {}) do healBy[h.name] = h.total end
+        local deathsBy = {}
+        for _, dd in ipairs(info.deaths) do deathsBy[dd.name] = (deathsBy[dd.name] or 0) + 1 end
+        local me = UnitName("player")
+        for _, mem in ipairs(run and run.members or {}) do
+            m.party[#m.party + 1] = { name = mem.name, classId = mem.class, role = mem.role, ilvl = mem.ilvl,
+                                      heal = healBy[mem.name], deaths = deathsBy[mem.name] or 0, me = (mem.name == me) }
+        end
+
+        -- bosses: the checklist (clear order) with the kill times; else just the kills
+        local killT = {}
+        local prev = 0
+        for _, k in ipairs(info.kills) do
+            killT[k.name] = { t = k.t, dur = k.t - prev }
+            prev = k.t
+        end
+        if info.list and #info.list > 0 then
+            for _, b in ipairs(info.list) do
+                local k = killT[b.name]
+                m.bosses[#m.bosses + 1] = { name = b.objective and (DCL("Objective") .. ": " .. b.name) or b.name,
+                                            status = b.status, t = k and k.t, dur = k and k.dur }
+            end
+        else
+            for _, k in ipairs(info.kills) do
+                m.bosses[#m.bosses + 1] = { name = k.name, status = "dead", t = k.t, dur = killT[k.name].dur }
+            end
+        end
+
+        for _, dd in ipairs(info.deaths) do
+            local mem = who[dd.name]
+            -- "Aledraan 100% mana, standing, not casting, 6 yd away" -> "healer 6 yd away" (the raw text goes to the technical list)
+            local note = ""
+            if dd.healers and dd.healers ~= "" then
+                local near
+                for ydText in dd.healers:gmatch("(%d+) yd away") do
+                    local yd = tonumber(ydText)
+                    if not near or yd < near then near = yd end
+                end
+                if near then note = ZT("治疗在 " .. near .. " 码外", "healer " .. near .. " yd away")
+                elseif dd.healers:find("dead") then note = ZT("治疗者已倒下", "healer was dead") end
+                m.tech[#m.tech + 1] = string.format("%s  %s", Clock(dd.t), dd.healers)
+            end
+            m.deaths[#m.deaths + 1] = {
+                t = dd.t, name = dd.name, classId = mem and mem.class, onBoss = dd.onBoss,
+                killer = (dd.killer ~= "" and dd.killer) or dd.by or "", spell = SpellText(dd.spellId, dd.spell),
+                amount = dd.amount, overkill = dd.overkill, dmg5 = dd.dmg5, heal5 = dd.heal5, healerNote = note,
+            }
+        end
+        for _, t in ipairs(info.dmg or {}) do
+            m.taken[#m.taken + 1] = { src = t.src, spell = SpellText(t.spellId, t.spell), total = t.total, hits = t.hits }
+        end
+        for _, h in ipairs(info.hstats or {}) do
+            m.healers[#m.healers + 1] = { name = h.name, heal = healBy[h.name], combat = h.combat, moving = h.moving,
+                                          casting = h.casting, low = h.low, lowIdle = h.lowIdle, minMana = h.minMana,
+                                          castList = h.castList }
+            for _, c in ipairs(h.castList or {}) do
+                m.tech[#m.tech + 1] = string.format("%s  %ds  %s", h.name, c.secs, c.text)
+            end
+        end
+        m.onFull = function() DCStats.Open(m) end
+        return m
+    end
+
     local function RenderStats()
         local run = info and (FindRun(info.id) or HistFind(info.id))
         gearBox:Show()
         for _, c in ipairs(gearCells) do c:Hide() end
         statsBox:Show()
-        statsBox:Clear()
         if not info then return end
         local name = run and DungeonName(run.token) or info.id
         gearLabel:SetText(DCL("Run stats") .. ": " .. name)
-        -- Inserted at the TOP, so add the lines bottom-up.
-        local lines = {}
-        if run then
-            local q = QUALITY_NAMES[run.gearQuality]
-            lines[#lines + 1] = string.format("%s %d/%d   %s %d   %s %d   %s %s",
-                DCL("Bosses"), run.killed, run.total, DCL("Deaths"), run.deaths or 0,
-                DCL("Pulls"), run.pulls or 0, DCL("Time"), Clock(run.elapsed))
-            lines[#lines + 1] = string.format("%s %s   %s %s %s",
-                DCL("Seed:"), run.roster and DCL("(my characters)") or tostring(run.seed),
-                DCL("Gear"), (run.gearIlvl or 0) > 0 and ("<=" .. run.gearIlvl) or DCL("unlimited"),
-                q and DCL(q) or "")
-            -- DCGM1B3: the tier on its own line; anything but plain Normal is not a clean result.
-            local tag = TierTag(run.tier)
-            if tag ~= "" then
-                local clean = run.tier == "-" or run.tier == "normal"
-                lines[#lines + 1] = DCL("Cheat tier:") .. " " .. tag ..
-                    (clean and "" or ("|cff999999" .. DCL("(not a clean result)") .. "|r"))
-            end
-        end
-        -- DCTEST7A: the boss/objective checklist, in clear order.
-        if info.list and #info.list > 0 then
-            local done = 0
-            for _, b in ipairs(info.list) do if b.status == "dead" then done = done + 1 end end
-            lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Boss progress") .. " " .. done .. "/" .. #info.list .. " --|r"
-            local STATUS = {
-                dead = "|cff00ff00" .. DCL("Killed") .. "|r", current = "|cffffd100" .. DCL("Current target") .. "|r",
-                skipped = "|cff999999" .. DCL("Skipped") .. "|r", alive = "|cffffffff" .. DCL("Not yet") .. "|r",
-            }
-            for i, b in ipairs(info.list) do
-                local name = b.objective and (DCL("Objective") .. ": " .. b.name) or b.name
-                local color = b.status == "dead" and "|cff999999" or (b.status == "current" and "|cffffd100" or "|cffffffff")
-                lines[#lines + 1] = string.format("  %d. %s%s|r  %s", i, color, name, STATUS[b.status] or b.status)
-            end
-        end
-        lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Bosses down") .. " --|r"
-        if #info.kills == 0 then lines[#lines + 1] = "  |cff999999" .. DCL("none yet") .. "|r" end
-        for _, k in ipairs(info.kills) do
-            lines[#lines + 1] = "  " .. Clock(k.t) .. "  |cff00ff00" .. k.name .. "|r"
-        end
-        lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Deaths") .. " --|r"
-        if #info.deaths == 0 then lines[#lines + 1] = "  |cff999999" .. DCL("none yet") .. "|r" end
-        for _, dd in ipairs(info.deaths) do
-            local by = dd.by ~= "" and (" <- " .. dd.by .. (dd.onBoss and (" |cffff8000(" .. DCL("boss") .. ")|r") or "")) or (" |cff999999(" .. DCL("out of combat") .. ")|r")
-            lines[#lines + 1] = "  " .. Clock(dd.t) .. "  |cffff3333" .. dd.name .. "|r" .. by
-            -- DCBOSS1A: what actually killed them
-            if dd.killer and dd.killer ~= "" then
-                local sp = SpellText(dd.spellId, dd.spell)
-                local txt = dd.killer .. (sp ~= "" and (" - " .. sp) or "") .. "  " .. Kfmt(dd.amount)
-                if (dd.overkill or 0) > 0 then txt = txt .. " (" .. DCL("overkill") .. " " .. Kfmt(dd.overkill) .. ")" end
-                if (dd.bossHp or -1) >= 0 then txt = txt .. "  " .. string.format(DCL("killer at %d%% health"), dd.bossHp) end
-                lines[#lines + 1] = "      |cffbbbbbb" .. DCL("Killed by") .. ": " .. txt .. "|r"
-                lines[#lines + 1] = "      |cff999999" .. string.format(DCL("Last 5 s: %s damage taken, %s healing received"),
-                    Kfmt(dd.dmg5), Kfmt(dd.heal5)) .. "|r"
-                if dd.topSrc and dd.topSrc ~= "" and dd.topAmount > 0 then
-                    lines[#lines + 1] = "      |cff999999" .. DCL("Most damage") .. ": " .. dd.topSrc ..
-                        ((dd.topSpell ~= "") and (" - " .. dd.topSpell) or "") .. "  " .. Kfmt(dd.topAmount) .. "|r"
-                end
-            end
-            if dd.healers and dd.healers ~= "" then  -- DCBOSS1B: where the healers were
-                lines[#lines + 1] = "      |cff999999" .. DCL("Healers") .. ": " .. dd.healers .. "|r"
-            end
-        end
-        if info.dmg and #info.dmg > 0 then
-            lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Damage taken by source") .. " --|r"
-            for _, t in ipairs(info.dmg) do
-                local sp = SpellText(t.spellId, t.spell)
-                lines[#lines + 1] = "  " .. Kfmt(t.total) .. "  " .. t.src .. ((sp ~= "") and (" - " .. sp) or "") ..
-                    "  |cff999999x" .. t.hits .. "|r"
-            end
-        end
-        if info.heals and #info.heals > 0 then
-            lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Healing done") .. " --|r"
-            for _, t in ipairs(info.heals) do
-                lines[#lines + 1] = "  " .. Kfmt(t.total) .. "  " .. t.name
-            end
-        end
-        if info.hstats and #info.hstats > 0 then  -- DCBOSS1B
-            lines[#lines + 1] = "|cff3da6ff-- " .. DCL("Healer activity") .. " --|r"
-            for _, h in ipairs(info.hstats) do
-                lines[#lines + 1] = "  " .. string.format(DCL("%s: %d s in combat, moving %d s, casting %d s; ally below half health %d s (moving %d s, idle %d s); lowest mana %d%%"),
-                    h.name, h.combat, h.moving, h.casting, h.low, h.lowMoving, h.lowIdle, h.minMana)
-                if h.castList and #h.castList > 0 then  -- DCBOSS1C / 1D
-                    lines[#lines + 1] = "      |cff999999" .. DCL("Cast check while idle") .. ":|r"
-                    for _, c in ipairs(h.castList) do
-                        lines[#lines + 1] = "        |cff999999" .. c.secs .. " s  " .. c.text .. "|r"
-                    end
-                end
-            end
-        end
-        for i = #lines, 1, -1 do statsBox:AddMessage(lines[i]) end
-        statsBox:Flush(info.id)  -- DCUI4B4: keeps the scroll position while the same run refreshes
+        if not (DCStats and statsBox.view) then return end
+        local m = capture.statsModel(info, run)
+        statsBox.view:Render(m)
+        DCStats.Refresh(m)   -- the full window, when it is open on this same run
     end
 
     local runMenuFrame = CreateFrame("Frame", "DungeonClearTestRunMenu", UIParent, "UIDropDownMenuTemplate")
@@ -6322,51 +6256,50 @@ do
     function R.ShowStats(id, det)
         local d
         for _, x in ipairs(Store().list) do if x.id == id then d = x end end
-        if not d then return end
-        if not sf then
-            sf = CreateFrame("Frame", "DungeonClearRunStatsFrame", UIParent)
-            sf:SetSize(400, 480); sf:SetPoint("CENTER"); sf:SetFrameStrata("DIALOG")
-            sf:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-                             tile = true, tileSize = 12, edgeSize = 14, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
-            sf:SetBackdropColor(0.03, 0.04, 0.06, 0.95); sf:SetBackdropBorderColor(0.42, 0.36, 0.22, 1)
-            sf:EnableMouse(true); sf:SetMovable(true); sf:RegisterForDrag("LeftButton")
-            sf:SetScript("OnDragStart", sf.StartMoving); sf:SetScript("OnDragStop", sf.StopMovingOrSizing)
-            local close = CreateFrame("Button", nil, sf, "UIPanelCloseButton"); close:SetPoint("TOPRIGHT", -2, -2)
-            sf.title = sf:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge"); sf.title:SetPoint("TOPLEFT", 14, -12)
-            sf.title:SetPoint("RIGHT", sf, "RIGHT", -34, 0); sf.title:SetJustifyH("LEFT")
-            sf.body = sf:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); Crisp(sf.body, 12)
-            sf.body:SetPoint("TOPLEFT", 14, -40); sf.body:SetPoint("RIGHT", sf, "RIGHT", -14, 0)
-            sf.body:SetJustifyH("LEFT"); sf.body:SetJustifyV("TOP")
-            tinsert(UISpecialFrames, "DungeonClearRunStatsFrame")
-        end
+        if not d or not DCStats then return end
         det = det or { members = {}, bosses = {}, deaths = {} }
+        local ZT = DCStats.T
+        local green, red, yellow, grey = { 0.25, 0.88, 0.38 }, { 1.0, 0.31, 0.28 }, { 1.0, 0.82, 0.0 }, { 0.55, 0.60, 0.66 }
+        local RCOL = { clear = green, wipe = red, death = { 1.0, 0.59, 0.16 }, running = yellow }
         local res = RESULT[d.result] or RESULT["end"]
         local t = TIER[d.tier] or TIER.normal
-        sf.title:SetText(DCLDungeon(d.name) .. (d.heroic and (" " .. DCL("(Heroic)")) or ""))
-        local L = {}
-        local function add(s) L[#L + 1] = s end
-        add(string.format("|cffffd100%s|r %s%s|r   |cffffd100%s|r %s%s|r", DCL("Result"), res[2], DCL(res[1]), DCL("Cheat tier"), t[2], DCL(t[1])))
-        if det.reason and det.reason ~= "" then add("|cffffd100" .. DCL("Reason") .. "|r " .. DCLDetail(det.reason)) end
-        add(string.format("|cffffd100%s|r %s   |cffffd100%s|r %s   |cffffd100%s|r %d", DCL("Started"), Date(d.start),
-            DCL("Time"), Dur(d.dur), DCL("Restarts"), det.restarts or 0))
-        add("")
-        add(string.format("|cff3da6ff%s %d/%d|r", DCL("Boss kills"), #det.bosses, d.total or 0))
-        for _, e in ipairs(det.bosses) do add("  " .. Dur(e.t) .. "  " .. e.name) end
-        add("")
-        add(string.format("|cff3da6ff%s %d|r", DCL("Deaths"), #det.deaths))
-        for i, e in ipairs(det.deaths) do
-            if i > 12 then add("  " .. string.format(DCL("and %d more"), #det.deaths - 12)); break end
-            add("  " .. Dur(e.t) .. "  " .. e.name)
+        local m = { key = "clear:" .. id, mode = "clear", bosses = {}, deaths = {}, party = {}, notes = {} }
+        m.title = DCLDungeon(d.name)
+        m.heroic = d.heroic
+        m.result = { text = DCL(res[1]), rgb = RCOL[d.result] or grey }
+        local parts = { Date(d.start), DCL(t[1]) }
+        if (det.restarts or 0) > 0 then parts[#parts + 1] = ZT("重启 ", "restarts ") .. det.restarts end
+        m.subline = table.concat(parts, "   ")
+        local bossN, total = d.bosses or 0, d.total or 0
+        m.tiles = {
+            { label = ZT("首领", "Bosses"), value = string.format("%d/%d", bossN, total),
+              rgb = (total > 0 and bossN >= total) and green or { 0.91, 0.93, 0.96 }, frac = total > 0 and (bossN / total) or 0 },
+            { label = ZT("用时", "Time"), value = Dur(d.dur) },
+            { label = ZT("死亡", "Deaths"), value = tostring(d.deaths or 0), rgb = ((d.deaths or 0) > 0) and red or green },
+        }
+        local cls, deathsBy = {}, {}
+        for _, e in ipairs(det.deaths) do deathsBy[e.name] = (deathsBy[e.name] or 0) + 1 end
+        local me = UnitName("player")
+        for _, mem in ipairs(det.members) do
+            cls[mem.name] = mem.cls
+            m.party[#m.party + 1] = { name = mem.name, classId = mem.cls, kind = DCL(KIND[mem.kind] or "real player"),
+                                      deaths = deathsBy[mem.name] or 0, me = (mem.name == me) }
         end
-        add("")
-        add(string.format("|cff3da6ff%s %d|r", DCL("Members"), #det.members))
-        for i, m in ipairs(det.members) do
-            if i > 12 then add("  " .. string.format(DCL("and %d more"), #det.members - 12)); break end
-            local token = CLASS_BY_ID[m.cls]
-            add(string.format("  %s%s|r  %s %d  |cff999999%s|r", ClassHex(token), m.name, DCL("Lv"), m.level, DCL(KIND[m.kind] or "real player")))
+        local prev = 0
+        for _, e in ipairs(det.bosses) do
+            m.bosses[#m.bosses + 1] = { name = e.name, status = "dead", t = e.t, dur = e.t - prev }
+            prev = e.t
         end
-        sf.body:SetText(table.concat(L, "\n"))
-        sf:Show()
+        for _ = #det.bosses + 1, total do
+            m.bosses[#m.bosses + 1] = { name = ZT("未击杀", "not killed"), status = "alive" }
+        end
+        for _, e in ipairs(det.deaths) do
+            m.deaths[#m.deaths + 1] = { t = e.t, name = e.name, classId = cls[e.name] }
+        end
+        if det.reason and det.reason ~= "" then m.notes[#m.notes + 1] = DCLDetail(det.reason) end
+        m.notes[#m.notes + 1] = ZT("装等、输出、承伤、死亡原因等更详细的数据，之后的版本才开始记录。",
+                                    "Item level, damage, damage taken and death causes are recorded from a later version.")
+        DCStats.Open(m)
     end
 
     -- right-click menu
