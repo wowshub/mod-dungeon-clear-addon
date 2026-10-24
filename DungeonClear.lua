@@ -3614,9 +3614,44 @@ end
             end
         end
     end
+    -- RebornWOW DCUI4B5: keep the docked windows above the Test view. The view's level is reset
+    -- to "panel + 30" on every ApplyMode and the panel is toplevel (its level rises when clicked),
+    -- so windows pinned once at "view + 4" could end up under the view's opaque cover.
+    local guardView, guardTold = nil, {}
+    local guard = CreateFrame("Frame")
+    guard:Hide()
+    local gacc = 0
+    guard:SetScript("OnUpdate", function(self, e)
+        gacc = gacc + (e or 0)
+        if gacc < 0.5 then return end
+        gacc = 0
+        if not docked or not guardView or not guardView:IsVisible() then return end
+        local lvl = guardView:GetFrameLevel()
+        for _, f in ipairs(dockedSingle and { tf } or { tf, lf }) do
+            local why
+            if f:GetParent() ~= guardView then why = "parent"
+            elseif f:GetFrameStrata() ~= guardView:GetFrameStrata() then why = "strata"
+            elseif f:GetFrameLevel() <= lvl + 1 then why = "level"
+            elseif not f:IsShown() then why = "hidden" end
+            if why then
+                Pin(f)
+                if not f:IsShown() then f:Show() end
+                if not guardTold[why] then
+                    guardTold[why] = true
+                    DEFAULT_CHAT_FRAME:AddMessage("|cff999999[DC] " .. DCL("A docked test window was covered or hidden; put back") .. " (" .. why .. ")|r")
+                end
+            end
+        end
+    end)
+    function DCTestRepin()
+        if not docked then return end
+        Pin(tf)
+        if not dockedSingle then Pin(lf) end
+    end
     function DCTestDock(hostL, hostC, hostR, view, single)
         if docked then return end
         docked = true
+        guardView = view; guard:Show()  -- DCUI4B5
         dockedSingle = single and true or false  -- DCUI4B2
         Hosted(true)          -- DCTEST9D: before anything moves
         if not single then
@@ -3745,6 +3780,7 @@ end
     function DCTestUndock()
         if not docked then return end
         docked = false
+        guard:Hide(); guardView = nil  -- DCUI4B5
         for _, m in ipairs(saved.moved) do Reanchor(m[1], m[2]) end
         for key, f in pairs({ tf = tf, lf = lf }) do
             local s = saved[key]
@@ -7598,6 +7634,7 @@ do
             Place(single)
             Paint()
             DCTestDock(hosts[1], hosts[2], hosts[3], view, single)
+            if DCTestRepin then DCTestRepin() end  -- DCUI4B5: already docked -> the view just moved up
             if shell.PlaceTestAutoRow then shell.PlaceTestAutoRow() end
             if shell.panelGrip then  -- DCTEST9A: the scale triangle above the docked windows
                 shell.panelGrip:SetFrameStrata(view:GetFrameStrata())

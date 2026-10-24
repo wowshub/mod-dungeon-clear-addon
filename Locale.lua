@@ -344,6 +344,8 @@ local zh = {
     -- DCBOSS1A
     -- DCBOSS1B
     -- DCBOSS1C
+    -- DCUI4B5
+    ["A docked test window was covered or hidden; put back"] = "停靠的测试窗口被挡住或隐藏了，已放回",
     -- DCPREP1B
     ["Readiness"] = "准备度",
     -- DCUI4B2
