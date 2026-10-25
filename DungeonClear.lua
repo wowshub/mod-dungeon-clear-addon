@@ -7193,10 +7193,25 @@ do
         else
             timer:SetText("")
         end
-        local total, dead = #bosses, 0
-        for _, b in ipairs(bosses) do if b.status == "dead" then dead = dead + 1 end end
+        -- DCBAR1A: the number counts real bosses only, like the run statistics do; the route's objectives
+        -- ("Objective: ..." -- The Nexus' three containment spheres) and events are shown beside it
+        local total, dead, objTotal, objDone = 0, 0, 0, 0
+        for _, b in ipairs(bosses) do
+            local nm = b.name or ""
+            if nm:find("^Objective: ") or nm:find("^Event: ") then
+                objTotal = objTotal + 1
+                if b.status == "dead" then objDone = objDone + 1 end
+            else
+                total = total + 1
+                if b.status == "dead" then dead = dead + 1 end
+            end
+        end
+        if total == 0 then   -- a map with no boss at all: count the route as before
+            total, dead, objTotal, objDone = #bosses, objDone, 0, 0
+        end
         if total > 0 then
-            bossTxt:SetText(DCL("Bosses") .. " " .. dead .. "/" .. total)
+            bossTxt:SetText(DCL("Bosses") .. " " .. dead .. "/" .. total
+                .. (objTotal > 0 and ("  |cff9aa4b2" .. DCL("Objective") .. " " .. objDone .. "/" .. objTotal .. "|r") or ""))
             barBg:Show(); barFill:Show(); barFill:SetWidth(math.max(1, 80 * dead / total))
         else
             bossTxt:SetText(""); barBg:Hide(); barFill:Hide()
