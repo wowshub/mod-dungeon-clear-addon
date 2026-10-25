@@ -5422,7 +5422,7 @@ do
             if d.online then add({ text = DCL("Whisper"), func = function() ChatFrame_SendTell(d.name) end }) end
         end
         menu[#menu + 1] = C1.FavItem(d.name)
-        if not d.npc and shell.c2 and shell.c2.MenuItems then shell.c2.MenuItems(menu, d.name, CLASS_BY_ID[d.cls], d.level) end  -- DCUI3C2
+        if shell.c2 and shell.c2.MenuItems then shell.c2.MenuItems(menu, d.name, CLASS_BY_ID[d.cls], d.level, d.npc) end  -- DCUI3C2; DCGRP1A: NPCBots too
         add({ text = CANCEL, func = function() CloseDropDownMenus() end })
         C1.Show(menu)
     end
@@ -5471,13 +5471,14 @@ do
             local d = self.data
             if not d then return end
             GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:AddLine(d.name)
-            if not d.npc then GameTooltip:AddLine(DCL("Drag onto My party to invite"), 1, 1, 1) end
+            if not d.npc then GameTooltip:AddLine(DCL("Drag onto My party to invite"), 1, 1, 1)
+            else GameTooltip:AddLine(DCL("Drag onto a favourite group to add it"), 1, 1, 1) end  -- DCGRP1A
             GameTooltip:AddLine(DCL("Right-click: more actions"), 0.7, 0.7, 0.7); GameTooltip:Show()
         end)
         r:SetScript("OnLeave", function() GameTooltip:Hide() end)
         r:SetScript("OnDragStart", function(self)
             local d = self.data
-            if not d or d.npc or (InGroup(d.name) and not shell.c2.active) then return end  -- DCUI3C2
+            if not d or (d.npc and not shell.c2.active) or (InGroup(d.name) and not shell.c2.active) then return end  -- DCUI3C2; DCGRP1A: an NPCBot only into a group
             C1.drag = d
             GameTooltip:Hide()
             SetClassIcon(ghost.icon, CLASS_BY_ID[d.cls])
@@ -5686,6 +5687,7 @@ do
                     r.info:SetPoint("RIGHT", r, "RIGHT", -6, 0)
                     local rs = e.m.role and ROLE_SHOW[e.m.role]
                     r.info:SetText((e.m.level and e.m.level > 0 and (DCL("Lv") .. " " .. e.m.level .. "  ") or "")
+                                   .. (e.m.npc and "|cff3da6ffNPCBot|r  " or "")
                                    .. (rs and (rs[2] .. DCL(rs[1]) .. "|r") or ""))
                     r.bgt:SetTexture(0.03, 0.04, 0.06, 0.72)
                     r.form:Hide()
@@ -5722,10 +5724,10 @@ do
     gp:SetScript("OnMouseWheel", function(_, delta) C2.offset = C2.offset - delta * 3; C2.Render() end)
 
     -- members
-    function C2.AddMember(g, name, cls, level, role)
+    function C2.AddMember(g, name, cls, level, role, npc)
         if Find(g, name) then Say(string.format(DCL("%s is already in this group."), name)); return end
         if #g.members >= g.size then Say(string.format(DCL("This group is full (%d)."), g.size)); return end
-        table.insert(g.members, { name = name, cls = cls, level = level, role = role })
+        table.insert(g.members, { name = name, cls = cls, level = level, role = role, npc = npc or nil })  -- DCGRP1A: npc = an NPCBot
         C2.Render()
     end
     -- RebornWOW DCUI3D5: several at once -- skips names already in the group, stops at its size
@@ -5735,7 +5737,7 @@ do
             if Find(g, m.name) then dup = dup + 1
             elseif #g.members >= g.size then full = full + 1
             else
-                table.insert(g.members, { name = m.name, cls = m.cls, level = m.level, role = m.role })
+                table.insert(g.members, { name = m.name, cls = m.cls, level = m.level, role = m.role, npc = m.npc })
                 added = added + 1
             end
         end
@@ -5754,7 +5756,7 @@ do
             Say(string.format(DCL("New %d-player favourite group %s: drag more characters in; right-click its name to rename it."),
                 g.size, g.name))
         end
-        C2.AddMember(C2.open, d.name, CLASS_BY_ID[d.cls], d.level)
+        C2.AddMember(C2.open, d.name, CLASS_BY_ID[d.cls], d.level, nil, d.npc)
     end
     local function CurrentMembers()
         local list = {}
@@ -5770,7 +5772,7 @@ do
         return list
     end
     -- items for the right-click menus of both lists: "add to favourite group ..."
-    function C2.MenuItems(menu, name, cls, level)
+    function C2.MenuItems(menu, name, cls, level, npc)
         if not name then return end
         local list = {}
         for _, g in ipairs(Groups()) do if C2.Visible(g) and #list < 12 then list[#list + 1] = g end end  -- DCUI3C4
@@ -5779,7 +5781,7 @@ do
         for _, g in ipairs(list) do
             menu[#menu + 1] = { text = string.format("  %s  |cff999999%d/%d|r", g.name, #g.members, g.size), notCheckable = true,
                                 disabled = Find(g, name) ~= nil or #g.members >= g.size,
-                                func = function() C2.AddMember(g, name, cls, level) end }
+                                func = function() C2.AddMember(g, name, cls, level, nil, npc) end }
         end
     end
 
@@ -5840,11 +5842,20 @@ do
     qf:Hide()
     local qacc = 0
     function C2.Form(g)
-        local names, me = {}, UnitName("player")
+        local names, me, npcMissing = {}, UnitName("player"), {}
         for _, m in ipairs(g.members) do
-            if m.name ~= me and not InGroup(m.name) then names[#names + 1] = m.name end
+            if m.name ~= me and not InGroup(m.name) then
+                if m.npc then npcMissing[#npcMissing + 1] = m.name else names[#names + 1] = m.name end
+            end
         end
-        if #names == 0 then Say(DCL("Everyone in this group is already with you.")); return end
+        -- DCGRP1A: an NPCBot is not invited by name; it is with you when it is hired and standing next to you
+        if #npcMissing > 0 then
+            Say(string.format(DCL("NPCBots cannot be invited from here (they come with you when hired and near you): %s"), table.concat(npcMissing, ", ")))
+        end
+        if #names == 0 then
+            if #npcMissing == 0 then Say(DCL("Everyone in this group is already with you.")) end
+            return
+        end
         local w = { size = g.size, names = {}, got = {}, queue = {}, offline = {}, endAt = GetTime() + 6 }
         for _, n in ipairs(names) do w.names[n] = true end
         C2.want = w
@@ -5917,7 +5928,7 @@ do
         end })
         add({ text = DCL("Copy"), func = function()
             local copy = { name = string.format(DCL("%s (copy)"), g.name), size = g.size, members = {}, owner = UnitName("player") }
-            for _, m in ipairs(g.members) do copy.members[#copy.members + 1] = { name = m.name, cls = m.cls, level = m.level, role = m.role } end
+            for _, m in ipairs(g.members) do copy.members[#copy.members + 1] = { name = m.name, cls = m.cls, level = m.level, role = m.role, npc = m.npc } end
             table.insert(Groups(), copy)
             C2.Render()
         end })
@@ -7421,7 +7432,7 @@ do
     local function Clear() wipe(S.names); wipe(S.order) end
     local function Members(list)
         local out = {}
-        for _, d in ipairs(list) do out[#out + 1] = { name = d.name, cls = CLASS_BY_ID[d.cls], level = d.level } end
+        for _, d in ipairs(list) do out[#out + 1] = { name = d.name, cls = CLASS_BY_ID[d.cls], level = d.level, npc = d.npc or nil } end
         return out
     end
 
@@ -7444,7 +7455,7 @@ do
             local d = r.data
             local on = d and S.names[d.name] ~= nil
             if r.chk then
-                if d and not d.npc then r.chk:Show(); r.chk:SetChecked(on and true or false) else r.chk:Hide() end
+                if d then r.chk:Show(); r.chk:SetChecked(on and true or false) else r.chk:Hide() end
             end
             if r.selbg then if on then r.selbg:Show() else r.selbg:Hide() end end
         end
@@ -7528,7 +7539,7 @@ do
         r.chk:SetSize(20, 20); r.chk:SetPoint("LEFT", r, "LEFT", 0, 0)
         r.chk:SetScript("OnClick", function(self)
             local d = r.data
-            if d and not d.npc then
+            if d then
                 if S.names[d.name] then S.names[d.name] = nil else Add(d) end
                 S.anchor = i
             end
@@ -7543,7 +7554,6 @@ do
                 if S.names[d.name] and Count() > 1 then Menu() elseif origClick then origClick(self, button) end
                 return
             end
-            if d.npc then return end
             if IsControlKeyDown() then
                 if S.names[d.name] then S.names[d.name] = nil else Add(d) end
                 S.anchor = i
@@ -7553,7 +7563,7 @@ do
                 local a, b = math.min(S.anchor, i), math.max(S.anchor, i)
                 for k = a, b do
                     local x = rosterRows[k] and rosterRows[k]:IsShown() and rosterRows[k].data
-                    if x and not x.npc then Add(x) end
+                    if x then Add(x) end
                 end
             else
                 local only = S.names[d.name] and Count() == 1
@@ -7589,7 +7599,7 @@ do
             end
         end)
         r:HookScript("OnEnter", function(self)
-            if self.data and not self.data.npc then
+            if self.data then
                 GameTooltip:AddLine(DCL("Ctrl+click: pick several; Shift+click: a range"), 0.7, 0.7, 0.7)
                 GameTooltip:Show()
             end
