@@ -446,6 +446,7 @@ local zh = {
     ["Left the dungeon"] = "离开副本",
     ["Ended"] = "已结束",
     ["In progress"] = "进行中",
+    ["Interrupted"] = "已中断",  -- DCRUN2A
     ["Run it again"] = "再刷一次",
     ["Delete this run"] = "删除这条",
     ["Delete all runs"] = "删除全部",

@@ -718,3 +718,254 @@ end
 function S.Refresh(m)  -- refresh the window only when it is open AND shows this same run
     if win and win:IsShown() and win.view.key == m.key then pcall(function() win.view:Render(m) end) end
 end
+
+-- ------------------------------------------------------------------ compare (RebornWOW DCRUN2A)
+-- Two to six runs side by side: one column per run (oldest on the left), the best value of a
+-- row in green, the worst in red/yellow, then each boss's split time, then the analysis lines.
+-- cm = {
+--   key, title = "Dungeon" | nil (several), heroic = bool,
+--   runs  = { { date, tier, heroic, name, result = { text, rgb }, dur, bosses, total, deaths,
+--               restarts, ilvl, killer, party = { classId, ... }, kills = { [boss] = { t, dur } },
+--               det = bool, clear = bool, loading = bool }, ... },
+--   order = { "boss name", ... },          -- kill order of the run with the most kills
+--   notes = { "text", ... },
+-- }
+local LABEL_W = 120
+
+-- best / worst of a list of numbers (nil skipped); lowGood: the smallest is the best
+local function Extremes(vals, lowGood)
+    local lo, hi, n = nil, nil, 0
+    for _, v in pairs(vals) do
+        if v then
+            n = n + 1
+            if not lo or v < lo then lo = v end
+            if not hi or v > hi then hi = v end
+        end
+    end
+    if n < 2 or lo == hi then return nil, nil end
+    if lowGood then return lo, hi end
+    return hi, lo
+end
+
+function View:RenderCompare(cm)
+    self.model = nil
+    local W, n = self.W, #cm.runs
+    self:Begin()
+    local cw = math.floor((W - LABEL_W) / math.max(1, n))
+    local function cx(i) return LABEL_W + (i - 1) * cw + math.floor(cw / 2) end
+    local y = 0
+
+    -- ---- header
+    self:Rect("BACKGROUND", 0, y, W, 56, C.card)
+    self:Rect("ARTWORK", 0, y, 4, 56, C.blue)
+    local title = Cut(cm.title or T("多个副本", "Several dungeons"), 18)
+    self:Text(14, y + 7, title, 20, C.gold)
+    local bx = math.min(14 + Width(title, 20) + 10, W - 120)
+    if cm.heroic then self:Badge(bx, y + 9, 40, 18, T("英雄", "Heroic"), C.orange, { 0.27, 0.14, 0.05, 1 }); bx = bx + 46 end
+    self:Badge(bx, y + 9, 64, 18, T("对比统计", "Compare"), C.blue, { 0.10, 0.12, 0.25, 1 })
+    self:Text(14, y + 36, string.format(T("%d 局并排对比，绿色最好，红色最差", "%d runs side by side; green = best, red = worst"), n), 11, C.grey)
+    y = y + 64
+
+    -- ---- one head per run
+    self:Rect("BACKGROUND", 0, y, W, 48, C.card2)
+    self:Text(10, y + 8, T("日期", "Date"), 12, C.grey)
+    self:Text(10, y + 26, T("结果", "Result"), 12, C.grey)
+    for i, r in ipairs(cm.runs) do
+        if i > 1 then self:Rect("ARTWORK", LABEL_W + (i - 1) * cw, y + 6, 1, 36, C.track) end
+        self:Text(cx(i), y + 6, r.date or "", 12, C.white, "CENTER")
+        local sub = r.result.text
+        if not cm.title then sub = Cut(r.name or "", 6) .. " " .. sub end
+        self:Text(cx(i), y + 25, sub, 12, r.result.rgb or C.white, "CENTER")
+    end
+    y = y + 52
+
+    -- ---- metric rows
+    local odd = false
+    local function Line(label, cells, h)
+        h = h or 30
+        odd = not odd
+        self:Rect("BACKGROUND", 0, y, W, h, odd and C.card or { 0.055, 0.075, 0.11, 1 })
+        self:Text(10, y + math.floor((h - 12) / 2), label, 12, C.grey)
+        for i, c in ipairs(cells) do
+            if c.party then
+                local k = math.min(#c.party, 6)
+                local size = 16
+                local x0 = cx(i) - math.floor(k * (size + 1) / 2)
+                for j = 1, k do
+                    local ic = self:Icon(x0 + (j - 1) * (size + 1), y + math.floor((h - size) / 2), size, "Interface\\Icons\\INV_Misc_QuestionMark")
+                    SetClassIcon(ic, c.party[j])
+                end
+                if k == 0 then self:Text(cx(i), y + 8, "-", 13, C.dim, "CENTER") end
+            elseif c.sub then
+                self:Text(cx(i), y + 3, c[1], 14, c[2] or C.white, "CENTER")
+                self:Text(cx(i), y + 18, c.sub, 10, c.subRGB or C.dim, "CENTER")
+            else
+                self:Text(cx(i), y + math.floor((h - 14) / 2), c[1], 14, c[2] or C.white, "CENTER")
+            end
+        end
+        y = y + h
+    end
+
+    -- time: the fastest clear is the reference
+    local ref
+    for _, r in ipairs(cm.runs) do if r.clear and (not ref or r.dur < ref.dur) then ref = r end end
+    local cells = {}
+    for i, r in ipairs(cm.runs) do
+        if r == ref then cells[i] = { Clock(r.dur), C.green, sub = T("最快", "fastest"), subRGB = C.green }
+        elseif r.clear and ref then cells[i] = { Clock(r.dur), C.white, sub = "+" .. Clock(r.dur - ref.dur), subRGB = C.red }
+        else cells[i] = { Clock(r.dur), C.grey, sub = T("未全清", "not cleared") } end
+    end
+    Line(T("用时", "Time"), cells)
+
+    cells = {}
+    for i, r in ipairs(cm.runs) do
+        cells[i] = { string.format("%d/%d", r.bosses, r.total), (r.total > 0 and r.bosses >= r.total) and C.green or C.white }
+    end
+    Line(T("首领", "Bosses"), cells)
+
+    local vals = {}
+    for i, r in ipairs(cm.runs) do vals[i] = r.deaths end
+    local best, worst = Extremes(vals, true)
+    cells = {}
+    for i, r in ipairs(cm.runs) do
+        cells[i] = { tostring(r.deaths), (r.deaths == best and C.green) or (r.deaths == worst and C.red) or C.white }
+    end
+    Line(T("死亡", "Deaths"), cells)
+
+    cells = {}
+    for i, r in ipairs(cm.runs) do
+        if r.restarts then cells[i] = { tostring(r.restarts), r.restarts > 0 and C.yellow or C.white }
+        else cells[i] = { r.loading and "..." or "-", C.dim } end
+    end
+    Line(T("重新开始", "Restarts"), cells)
+
+    vals = {}
+    for i, r in ipairs(cm.runs) do vals[i] = r.ilvl end
+    best, worst = Extremes(vals, false)
+    cells = {}
+    for i, r in ipairs(cm.runs) do
+        if r.ilvl then cells[i] = { tostring(r.ilvl), (r.ilvl == best and C.green) or (r.ilvl == worst and C.orange) or C.white }
+        else cells[i] = { r.loading and "..." or "-", C.dim } end
+    end
+    Line(T("平均装等", "Avg iLvl"), cells)
+
+    cells = {}
+    for i, r in ipairs(cm.runs) do
+        if r.killer then cells[i] = { Cut(r.killer, math.max(4, math.floor(cw / 14))), C.red }
+        else cells[i] = { (r.loading and "...") or (r.deaths > 0 and "?" or "-"), C.dim } end
+    end
+    Line(T("主要死因", "Main killer"), cells)
+
+    cells = {}
+    for i, r in ipairs(cm.runs) do cells[i] = { party = r.party or {} } end
+    Line(T("队伍", "Party"), cells)
+    y = y + 10
+
+    -- ---- boss splits
+    self:Rect("BACKGROUND", 0, y, W, 28, C.card2)
+    self:Rect("ARTWORK", 0, y, 3, 28, C.gold)
+    self:Icon(10, y + 5, 18, SpellIcon(SEC_ICON.bosses))
+    self:Text(34, y + 6, T("首领分段用时", "Boss splits"), 14, C.white)
+    self:Text(W - 10, y + 8, T("上：这一段用时   下：击杀时刻", "top: split   bottom: kill time"), 11, C.grey, "RIGHT")
+    y = y + 32
+    odd = false
+    if #cm.order == 0 then
+        local loading = false
+        for _, r in ipairs(cm.runs) do if r.loading then loading = true end end
+        self:Rect("BACKGROUND", 0, y, W, 28, C.card)
+        self:Text(12, y + 7, loading and T("正在向服务器读取详细数据…", "Asking the server for the detail...")
+            or T("这些记录没有首领击杀明细", "These runs have no boss kill detail"), 12, C.dim)
+        y = y + 32
+    end
+    for _, name in ipairs(cm.order) do
+        vals = {}
+        for i, r in ipairs(cm.runs) do vals[i] = r.kills[name] and r.kills[name].dur or nil end
+        best, worst = Extremes(vals, true)
+        cells = {}
+        for i, r in ipairs(cm.runs) do
+            local k = r.kills[name]
+            if k then
+                cells[i] = { Clock(k.dur), (k.dur == best and C.green) or (k.dur == worst and C.yellow) or C.white, sub = "@" .. Clock(k.t) }
+            else
+                cells[i] = { r.loading and "..." or "-", C.dim }
+            end
+        end
+        Line(Cut(name, 8), cells)
+    end
+    y = y + 10
+
+    -- ---- analysis
+    if cm.notes and #cm.notes > 0 then
+        self:Rect("BACKGROUND", 0, y, W, 28, C.card2)
+        self:Rect("ARTWORK", 0, y, 3, 28, C.purple)
+        self:Icon(10, y + 5, 18, SpellIcon(SEC_ICON.tech))
+        self:Text(34, y + 6, T("分析", "Analysis"), 14, C.white)
+        y = y + 32
+        local per = math.max(20, math.floor((W - 24) / 12))
+        self:Rect("BACKGROUND", 0, y, W, #cm.notes * 20 + 8, C.card)
+        for _, s in ipairs(cm.notes) do
+            self:Text(12, y + 5, Cut(s, per), 12, C.white)
+            y = y + 20
+        end
+        y = y + 12
+    end
+
+    self:End()
+    self.contentH = y + 8
+    self.content:SetHeight(self.contentH)
+    self:Sync(0)
+end
+
+local cwin
+function S.OpenCompare(cm)
+    local n = #cm.runs
+    local W = math.max(520, math.min(900, LABEL_W + n * 130))
+    if not cwin then
+        local ok, err = pcall(function()
+            cwin = CreateFrame("Frame", "DungeonClearCompareFrame", UIParent)
+            cwin:SetPoint("CENTER", UIParent, "CENTER", 60, 0)
+            cwin:SetFrameStrata("FULLSCREEN_DIALOG")
+            cwin:SetToplevel(true)
+            cwin:SetMovable(true); cwin:EnableMouse(true); cwin:SetClampedToScreen(true)
+            cwin:RegisterForDrag("LeftButton")
+            cwin:SetScript("OnDragStart", function(self) self:StartMoving() end)
+            cwin:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+            cwin:SetBackdrop({ bgFile = "Interface\\ChatFrame\\ChatFrameBackground", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                               tile = true, tileSize = 16, edgeSize = 14, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+            cwin:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], C.bg[4])
+            cwin:SetBackdropBorderColor(0.42, 0.36, 0.22, 1)
+            local close = CreateFrame("Button", nil, cwin, "UIPanelCloseButton")
+            close:SetPoint("TOPRIGHT", cwin, "TOPRIGHT", 2, 2)
+            cwin.view = S.NewView(cwin, W, {})
+            cwin.view.holder:SetPoint("TOPLEFT", cwin, "TOPLEFT", 14, -34)
+            cwin.view.holder:SetPoint("BOTTOMRIGHT", cwin, "BOTTOMRIGHT", -12, 12)
+            local cap = cwin:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            cap:SetPoint("TOPLEFT", cwin, "TOPLEFT", 16, -12)
+            cap:SetText("|cff3da6ff" .. T("副本记录对比", "Compare runs") .. "|r")
+            cwin:SetScript("OnShow", function(self) self:Raise() end)
+            if UISpecialFrames then table.insert(UISpecialFrames, "DungeonClearCompareFrame") end
+            cwin:Hide()
+        end)
+        if not ok then
+            cwin = nil
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff3333DungeonClear compare window failed: " .. tostring(err) .. "|r")
+            return
+        end
+    end
+    cwin:SetSize(W + 44, 640)
+    cwin.view.W = W
+    cwin.view.content:SetWidth(W)
+    local ok, err = pcall(function() cwin.view:RenderCompare(cm) end)
+    if not ok then DEFAULT_CHAT_FRAME:AddMessage("|cffff3333DungeonClear compare: " .. tostring(err) .. "|r") end
+    cwin.key = cm.key
+    cwin:Show()
+    cwin:Raise()
+end
+
+function S.RefreshCompare(cm)  -- only while the window shows these same runs
+    if cwin and cwin:IsShown() and cwin.key == cm.key then
+        local keep = cwin.view.sf:GetVerticalScroll() or 0
+        local ok = pcall(function() cwin.view:RenderCompare(cm) end)
+        if ok then cwin.view:Sync(keep) end
+    end
+end

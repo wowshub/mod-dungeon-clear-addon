@@ -6151,6 +6151,12 @@ do
     -- a server restart). Each row: [tier] dungeon (heroic), result, bosses, deaths, time,
     -- date. Right-click: run it again (the continuous-clear queue resets the dungeon and
     -- starts again), run stats, delete. Asked for every 15 s while the column is shown.
+    -- RebornWOW DCRUN2A: Ctrl-click / Shift-click select several rows (right-click on them:
+    -- compare, delete); filters (dungeon / result / difficulty) over the list and a summary
+    -- under it; a star on each dungeon's fastest clear; a run the server no longer lists while
+    -- this addon still shows it running is marked interrupted (the server keeps runs in memory
+    -- only); the detail of a run is kept with it, so stats and the compare window still work
+    -- after a server restart. Commands go out one every 0.15 s (the server's addon-chat flood limit).
     -- Own function + a table on the shell (the main chunk's 200-local limit).
     shell.runs = {}
     ;(function()
@@ -6160,9 +6166,13 @@ do
                    casual = { "Casual", "|cff00ff00" }, speed = { "Speed", "|cffff6600" } }
     local RESULT = { clear = { "Cleared", "|cff40ff40" }, stop = { "Stopped", "|cffaaaaaa" }, wipe = { "Wiped", "|cffff5050" },
                      death = { "Stopped after deaths", "|cffff9933" }, left = { "Left the dungeon", "|cffaaaaaa" },
-                     ["end"] = { "Ended", "|cffaaaaaa" }, running = { "In progress", "|cffffd100" } }
+                     ["end"] = { "Ended", "|cffaaaaaa" }, running = { "In progress", "|cffffd100" },
+                     lost = { "Interrupted", "|cff888888" } }   -- DCRUN2A
     local KIND = { a = "your account", b = "playerbot", n = "NPCBot", p = "real player" }
     local MAX_KEEP = 50
+    local ZT = (DCStats and DCStats.T) or function(_, en) return en end   -- DCRUN2A: new texts in both languages
+    local NOT_CLEAR = { stop = true, wipe = true, death = true, left = true, ["end"] = true }
+    local STAR = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:13:13:0:-1|t"
 
     local function Store()
         DungeonClearDB.myRuns = DungeonClearDB.myRuns or {}
@@ -6187,11 +6197,11 @@ do
     emptyNote:SetPoint("RIGHT", col2, "RIGHT", -12, 0)
     emptyNote:SetJustifyH("LEFT")
     emptyNote:SetTextColor(0.82, 0.85, 0.90)
-    local ROWS, RH = 14, 42
+    local ROWS, RH, TOP, FOOT = 16, 42, 62, 66   -- DCRUN2A: filter bar on top, summary at the bottom
     local rows, offset = {}, 0
     for i = 1, ROWS do
         local r = Row(col2, RH - 3)
-        r:SetPoint("TOPLEFT", col2, "TOPLEFT", 8, -38 - (i - 1) * RH)
+        r:SetPoint("TOPLEFT", col2, "TOPLEFT", 8, -TOP - (i - 1) * RH)
         r:SetPoint("RIGHT", col2, "RIGHT", -8, 0)
         r.l1 = r:CreateFontString(nil, "OVERLAY", "GameFontNormal"); Crisp(r.l1, 13)
         r.l1:SetPoint("TOPLEFT", r, "TOPLEFT", 5, -4); r.l1:SetPoint("RIGHT", r, "RIGHT", -60, 0); r.l1:SetJustifyH("LEFT")
@@ -6199,26 +6209,169 @@ do
         r.res:SetPoint("TOPRIGHT", r, "TOPRIGHT", -5, -4)
         r.l2 = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(r.l2, 12)
         r.l2:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 5, 4); r.l2:SetPoint("RIGHT", r, "RIGHT", -5, 0); r.l2:SetJustifyH("LEFT")
+        r.sel = r:CreateTexture(nil, "BORDER"); r.sel:SetAllPoints(); r.sel:SetTexture(0.24, 0.60, 1.0, 0.24)   -- DCRUN2A
+        r.selEdge = r:CreateTexture(nil, "ARTWORK"); r.selEdge:SetWidth(3)
+        r.selEdge:SetPoint("TOPLEFT", r, "TOPLEFT", 0, 0); r.selEdge:SetPoint("BOTTOMLEFT", r, "BOTTOMLEFT", 0, 0)
+        r.selEdge:SetTexture(0.91, 0.77, 0.42, 1)
+        r.sel:Hide(); r.selEdge:Hide()
         r:Hide()
         rows[i] = r
     end
 
+    -- DCRUN2A: filters, selection, summary
+    local sel, anchor = {}, nil          -- selected run ids; anchor = the last clicked one (Shift-click range)
+    local function Filter()
+        local f = DungeonClearDB.runsFilter
+        if type(f) ~= "table" then f = {}; DungeonClearDB.runsFilter = f end
+        f.dungeon, f.result, f.diff = f.dungeon or "all", f.result or "all", f.diff or "all"
+        return f
+    end
+    local function Pass(d, f)
+        if f.dungeon ~= "all" and d.name ~= f.dungeon then return false end
+        if (f.diff == "normal" and d.heroic) or (f.diff == "heroic" and not d.heroic) then return false end
+        if f.result == "clear" then return d.result == "clear" end
+        if f.result == "notclear" then return NOT_CLEAR[d.result] == true end
+        if f.result == "open" then return d.result == "running" or d.result == "lost" end
+        return true
+    end
+    local function Shown()
+        local f, out = Filter(), {}
+        for _, d in ipairs(Store().list) do if Pass(d, f) then out[#out + 1] = d end end
+        return out
+    end
+    local function Key(d) return tostring(d.map) .. (d.heroic and "h" or "n") end
+    -- the fastest clear of each dungeon + difficulty (over all runs, not just the filtered ones)
+    local function Bests()
+        local best = {}
+        for _, d in ipairs(Store().list) do
+            if d.result == "clear" and (d.dur or 0) > 0 then
+                local k = Key(d)
+                if not best[k] or d.dur < best[k].dur then best[k] = d end
+            end
+        end
+        return best
+    end
+    local function SelList()   -- selected runs, newest first
+        local out = {}
+        for _, d in ipairs(Store().list) do if sel[d.id] then out[#out + 1] = d end end
+        return out
+    end
+    local function ClearSel() for k in pairs(sel) do sel[k] = nil end end
+
+    -- commands one at a time (the server mutes a burst of addon messages)
+    local outq, qacc = {}, 0
+    local qf = CreateFrame("Frame", nil, UIParent)
+    qf:Hide()
+    qf:SetScript("OnUpdate", function(self, e)
+        qacc = qacc + (e or 0)
+        if qacc < 0.15 then return end
+        qacc = 0
+        local c = table.remove(outq, 1)
+        if not c then self:Hide(); return end
+        SendDcCommand(c[1], c[2], true)
+    end)
+    local function Queue(cmd, param) outq[#outq + 1] = { cmd, param }; qf:Show() end
+
+    local function FilterButton(w, x)
+        local b = CreateFrame("Button", nil, col2, "UIPanelButtonTemplate")
+        b:SetSize(w, 20)
+        b:SetPoint("TOPLEFT", col2, "TOPLEFT", x, -36)
+        return b
+    end
+    local fDungeon, fResult, fDiff = FilterButton(156, 8), FilterButton(112, 168), FilterButton(96, 284)
+    local footLine = col2:CreateTexture(nil, "ARTWORK"); footLine:SetHeight(1); footLine:SetTexture(0.25, 0.28, 0.35, 0.9)
+    footLine:SetPoint("BOTTOMLEFT", col2, "BOTTOMLEFT", 8, FOOT - 6); footLine:SetPoint("RIGHT", col2, "RIGHT", -8, 0)
+    local function FootText(y, size)
+        local f = col2:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); Crisp(f, size)
+        f:SetPoint("BOTTOMLEFT", col2, "BOTTOMLEFT", 12, y); f:SetPoint("RIGHT", col2, "RIGHT", -10, 0)
+        f:SetJustifyH("LEFT")
+        return f
+    end
+    local selNote, foot1, foot2 = FootText(42, 12), FootText(24, 12), FootText(8, 12)
+    selNote:SetPoint("RIGHT", col2, "RIGHT", -92, 0)
+    local selClear = CreateFrame("Button", nil, col2, "UIPanelButtonTemplate")
+    selClear:SetSize(76, 18); selClear:SetPoint("BOTTOMRIGHT", col2, "BOTTOMRIGHT", -10, 40)
+    selClear:SetScript("OnClick", function() ClearSel(); R.Render() end)
+
     function R.Render()
-        local list = Store().list
-        emptyNote:SetText(#list == 0 and DCL("No runs yet. Start dungeon clear with your party; when the run ends (cleared, stopped or wiped) it is listed here.") or "")
-        offset = math.max(0, math.min(offset, #list - ROWS))
+        local all = Store().list
+        local list = Shown()
+        local f = Filter()
+        local present = {}
+        for _, d in ipairs(all) do present[d.id] = true end
+        for id in pairs(sel) do if not present[id] then sel[id] = nil end end
+        if #all == 0 then
+            emptyNote:SetText(DCL("No runs yet. Start dungeon clear with your party; when the run ends (cleared, stopped or wiped) it is listed here."))
+        else
+            emptyNote:SetText(#list == 0 and ZT("没有符合筛选的记录。", "No runs match the filters.") or "")
+        end
+        emptyNote:ClearAllPoints()
+        emptyNote:SetPoint("TOPLEFT", col2, "TOPLEFT", 12, -TOP - 4); emptyNote:SetPoint("RIGHT", col2, "RIGHT", -12, 0)
+        -- filter buttons
+        local DIFF = { all = ZT("全部", "all"), normal = ZT("普通", "normal"), heroic = ZT("英雄", "heroic") }
+        local RES = { all = ZT("全部", "all"), clear = DCL("Cleared"), notclear = ZT("未全清", "not cleared"), open = ZT("未完成", "unfinished") }
+        fDungeon:SetText(ZT("副本：", "Dungeon: ") .. (f.dungeon == "all" and ZT("全部", "all") or DCLDungeon(f.dungeon)))
+        fResult:SetText(ZT("结果：", "Result: ") .. (RES[f.result] or RES.all))
+        fDiff:SetText(ZT("难度：", "Mode: ") .. (DIFF[f.diff] or DIFF.all))
+        for b, on in pairs({ [fDungeon] = f.dungeon ~= "all", [fResult] = f.result ~= "all", [fDiff] = f.diff ~= "all" }) do
+            if on then b:LockHighlight() else b:UnlockHighlight() end
+        end
+        -- rows: as many as fit above the summary
+        local colH = col2:GetHeight() or 0
+        if colH < 200 then colH = 640 end   -- not laid out yet
+        local vis = math.max(1, math.min(ROWS, math.floor((colH - TOP - FOOT) / RH)))
+        offset = math.max(0, math.min(offset, #list - vis))
+        local best = Bests()
         for i, r in ipairs(rows) do
-            local d = list[i + offset]
+            local d = (i <= vis) and list[i + offset]
             r.d = d
             if not d then r:Hide() else
                 local t = TIER[d.tier] or TIER.normal
                 local res = RESULT[d.result] or RESULT["end"]
-                r.l1:SetText(t[2] .. "[" .. DCL(t[1]) .. "]|r " .. DCLDungeon(d.name)
+                local b = best[Key(d)]
+                local isBest = b and b.id == d.id
+                r.l1:SetText((isBest and (STAR .. " ") or "") .. t[2] .. "[" .. DCL(t[1]) .. "]|r " .. DCLDungeon(d.name)
                              .. (d.heroic and (" |cffff8000" .. DCL("(Heroic)") .. "|r") or ""))
                 r.res:SetText(res[2] .. DCL(res[1]) .. "|r")
-                r.l2:SetText(string.format("%s %d/%d   %s %d   %s %s   |cff999999%s|r", DCL("Bosses"), d.bosses or 0,
-                    d.total or 0, DCL("Deaths"), d.deaths or 0, DCL("Time"), Dur(d.dur), Date(d.start)))
+                local time = Dur(d.dur)
+                if d.result == "clear" and b and not isBest then time = time .. " |cffff6060+" .. Dur(d.dur - b.dur) .. "|r" end
+                r.l2:SetText(string.format("%s %d/%d  %s %d  %s %s  |cff999999%s|r", DCL("Bosses"), d.bosses or 0,
+                    d.total or 0, DCL("Deaths"), d.deaths or 0, DCL("Time"), time, Date(d.start)))
+                if sel[d.id] then r.sel:Show(); r.selEdge:Show() else r.sel:Hide(); r.selEdge:Hide() end
                 r:Show()
+            end
+        end
+        -- summary of the filtered runs
+        local clears, deaths, fast, sum = 0, 0, nil, 0
+        for _, d in ipairs(list) do
+            deaths = deaths + (d.deaths or 0)
+            if d.result == "clear" then
+                clears = clears + 1
+                sum = sum + (d.dur or 0)
+                if not fast or d.dur < fast then fast = d.dur end
+            end
+        end
+        local n = 0
+        for _ in pairs(sel) do n = n + 1 end
+        if n > 0 then
+            selNote:SetText("|cffe8c46a" .. string.format(ZT("已选 %d 条，右键：对比统计 / 删除", "%d selected; right-click: compare / delete"), n) .. "|r")
+            selClear:SetText(ZT("取消选择", "Clear")); selClear:Show()
+        else
+            selNote:SetText("|cff7f8896" .. ZT("Ctrl+点击多选，Shift+点击连选", "Ctrl-click: pick several; Shift-click: a range") .. "|r")
+            selClear:Hide()
+        end
+        if #list == 0 then
+            foot1:SetText(""); foot2:SetText("")
+        else
+            foot1:SetText(string.format(ZT("共 |cffffffff%d|r 次   全清 |cff40ff40%d|r（%d%%）   死亡 |cffff6060%d|r",
+                "|cffffffff%d|r runs   cleared |cff40ff40%d|r (%d%%)   deaths |cffff6060%d|r"),
+                #list, clears, math.floor(clears * 100 / #list + 0.5), deaths))
+            if clears > 0 then
+                foot2:SetText(string.format(ZT("最快全清 |cff40ff40%s|r   全清平均 |cffffffff%s|r   %s=该副本最快",
+                    "fastest clear |cff40ff40%s|r   average clear |cffffffff%s|r   %s = the dungeon's fastest"),
+                    Dur(fast), Dur(math.floor(sum / clears + 0.5)), STAR))
+            else
+                foot2:SetText("|cff7f8896" .. ZT("还没有全清的记录", "No clears yet") .. "|r")
             end
         end
     end
@@ -6226,7 +6379,9 @@ do
     -- server replies: MR rows (upserted by id), MRX detail -> the stats window
     local pendingDetail = {}
     function R.OnMsg(kind, msg)
-        if kind == "MR" then
+        if kind == "MR_START" then
+            R.seen = {}                                  -- DCRUN2A: which runs the server still has
+        elseif kind == "MR" then
             local _, id, mapId, heroic, start, dur, result, bosses, total, deaths, tier, token, name = strsplit("\t", msg)
             local st = Store()
             if not id or st.deleted[id] then return end
@@ -6234,12 +6389,20 @@ do
                           dur = tonumber(dur) or 0, result = result, bosses = tonumber(bosses) or 0,
                           total = tonumber(total) or 0, deaths = tonumber(deaths) or 0, tier = tier,
                           token = (token ~= "-") and token or nil, name = name or "?" }
+            if R.seen then R.seen[id] = true end
             local found
-            for i, x in ipairs(st.list) do if x.id == id then st.list[i] = row; found = true; break end end
+            for i, x in ipairs(st.list) do if x.id == id then row.det = x.det; st.list[i] = row; found = true; break end end
             if not found then table.insert(st.list, row) end
             table.sort(st.list, function(a, b) return (a.start or 0) > (b.start or 0) end)
             while #st.list > MAX_KEEP do table.remove(st.list) end
         elseif kind == "MR_END" then
+            -- DCRUN2A: shown as running here but gone from the server (it restarted) -> interrupted
+            if R.seen then
+                for _, x in ipairs(Store().list) do
+                    if x.result == "running" and not R.seen[x.id] then x.result = "lost" end
+                end
+                R.seen = nil
+            end
             R.Render()
         elseif kind == "MRX" then
             local _, id, what, a, b, c, d, e, f = strsplit("\t", msg)
@@ -6264,7 +6427,12 @@ do
             local id = msg:match("^MRX_END\t(.*)$")
             local det = pendingDetail[id]
             pendingDetail[id] = nil
+            -- DCRUN2A: keep the detail with the run (the server forgets it on a restart)
+            if id and det and (#det.members > 0 or #det.bosses > 0) then
+                for _, x in ipairs(Store().list) do if x.id == id then x.det = det; break end end
+            end
             if id and id == R.wantDetail then R.wantDetail = nil; R.ShowStats(id, det) end
+            if id and R.cmp and R.cmp.want[id] then R.cmp.want[id] = nil; R.ShowCompare(false) end
         end
     end
 
@@ -6274,7 +6442,7 @@ do
         local d
         for _, x in ipairs(Store().list) do if x.id == id then d = x end end
         if not d or not DCStats then return end
-        det = det or { members = {}, bosses = {}, deaths = {} }
+        det = det or d.det or { members = {}, bosses = {}, deaths = {} }   -- DCRUN2A: the kept detail
         det.ilvl, det.taken, det.healers = det.ilvl or {}, det.taken or {}, det.healers or {}
         local ZT = DCStats.T
         local green, red, yellow, grey = { 0.25, 0.88, 0.38 }, { 1.0, 0.31, 0.28 }, { 1.0, 0.82, 0.0 }, { 0.55, 0.60, 0.66 }
@@ -6345,6 +6513,139 @@ do
         end,
         timeout = 0, whileDead = 1, hideOnEscape = 1,
     }
+    -- DCRUN2A: delete several (the server copy too, except interrupted runs it no longer has)
+    function R.DeleteIds(ids)
+        local st, gone = Store(), {}
+        for _, id in ipairs(ids) do gone[id] = true; st.deleted[id] = true; sel[id] = nil end
+        for i = #st.list, 1, -1 do
+            local x = st.list[i]
+            if gone[x.id] then
+                if x.result ~= "lost" then Queue("myrundel", x.id) end
+                table.remove(st.list, i)
+            end
+        end
+        R.Render()
+    end
+    StaticPopupDialogs["DUNGEONCLEAR_RUNS_DELETE_SEL"] = {
+        text = "%s", button1 = YES, button2 = NO,
+        OnAccept = function(_, ids) if type(ids) == "table" then R.DeleteIds(ids) end end,
+        timeout = 0, whileDead = 1, hideOnEscape = 1,
+    }
+    local function AskDelete(list)
+        local ids = {}
+        for _, d in ipairs(list) do ids[#ids + 1] = d.id end
+        local dlg = StaticPopup_Show("DUNGEONCLEAR_RUNS_DELETE_SEL",
+            string.format(ZT("删除选中的 %d 条副本记录？", "Delete the %d selected runs?"), #ids))
+        if dlg then dlg.data = ids end
+    end
+    local function LostRuns()
+        local out = {}
+        for _, d in ipairs(Store().list) do if d.result == "lost" then out[#out + 1] = d end end
+        return out
+    end
+
+    -- DCRUN2A: compare 2-6 runs (oldest on the left); details are asked for, the window fills in
+    local CMP_MAX = 6
+    function R.Compare(list)
+        if not (DCStats and DCStats.OpenCompare) then return end
+        local pick = {}
+        for _, d in ipairs(list) do pick[#pick + 1] = d end
+        table.sort(pick, function(x, y) return (x.start or 0) > (y.start or 0) end)
+        local cut = #pick > CMP_MAX
+        while #pick > CMP_MAX do table.remove(pick) end
+        table.sort(pick, function(x, y) return (x.start or 0) < (y.start or 0) end)
+        R.cmp = { ids = {}, want = {}, cut = cut }
+        for _, d in ipairs(pick) do
+            R.cmp.ids[#R.cmp.ids + 1] = d.id
+            if d.result ~= "lost" then R.cmp.want[d.id] = true; Queue("myrun", d.id) end
+        end
+        R.ShowCompare(true)
+    end
+    local RGB = { clear = { 0.25, 0.88, 0.38 }, wipe = { 1.0, 0.31, 0.28 }, death = { 1.0, 0.59, 0.16 },
+                  running = { 1.0, 0.82, 0.0 } }
+    function R.CompareModel()
+        local c = R.cmp
+        local byId = {}
+        for _, x in ipairs(Store().list) do byId[x.id] = x end
+        local runs, first, same = {}, nil, true
+        local orderSrc, most = nil, -1
+        for _, id in ipairs(c.ids) do
+            local d = byId[id]
+            if d then
+                first = first or d
+                if d.map ~= first.map or d.heroic ~= first.heroic then same = false end
+                local det = d.det
+                local kills, prev, party = {}, 0, {}
+                local killer, kn, cnt, il, iln = nil, 0, {}, 0, 0
+                if det then
+                    for _, e in ipairs(det.bosses or {}) do kills[e.name] = { t = e.t, dur = e.t - prev }; prev = e.t end
+                    if #(det.bosses or {}) > most then most, orderSrc = #det.bosses, det.bosses end
+                    for _, e in ipairs(det.deaths or {}) do
+                        if e.killer and e.killer ~= "" then
+                            cnt[e.killer] = (cnt[e.killer] or 0) + 1
+                            if cnt[e.killer] > kn then killer, kn = e.killer, cnt[e.killer] end
+                        end
+                    end
+                    for _, v in pairs(det.ilvl or {}) do if (v.ilvl or 0) > 0 then il = il + v.ilvl; iln = iln + 1 end end
+                    for _, m in ipairs(det.members or {}) do party[#party + 1] = m.cls end
+                end
+                local res = RESULT[d.result] or RESULT["end"]
+                local tier = TIER[d.tier] or TIER.normal
+                runs[#runs + 1] = { id = d.id, date = Date(d.start), tier = DCL(tier[1]), heroic = d.heroic,
+                    name = DCLDungeon(d.name), result = { text = DCL(res[1]), rgb = RGB[d.result] or { 0.55, 0.60, 0.66 } },
+                    dur = d.dur or 0, bosses = d.bosses or 0, total = d.total or 0, deaths = d.deaths or 0,
+                    restarts = det and det.restarts or nil, ilvl = iln > 0 and math.floor(il / iln + 0.5) or nil,
+                    killer = killer, party = party, kills = kills, det = det ~= nil, clear = d.result == "clear",
+                    loading = c.want[d.id] and true or false }
+            end
+        end
+        local order, seen = {}, {}
+        for _, e in ipairs(orderSrc or {}) do if not seen[e.name] then seen[e.name] = true; order[#order + 1] = e.name end end
+        for _, r in ipairs(runs) do
+            for name in pairs(r.kills) do if not seen[name] then seen[name] = true; order[#order + 1] = name end end
+        end
+        -- the analysis lines
+        local notes = {}
+        local ref
+        for _, r in ipairs(runs) do if r.clear and (not ref or r.dur < ref.dur) then ref = r end end
+        if ref then
+            notes[#notes + 1] = string.format(ZT("最快全清：%s，用时 %s", "Fastest clear: %s in %s"), ref.date, Dur(ref.dur))
+            for _, r in ipairs(runs) do
+                if r ~= ref and r.clear then
+                    local line = string.format(ZT("%s 比最快慢 %s", "%s: %s slower than the fastest"), r.date, Dur(r.dur - ref.dur))
+                    local wb, wd = nil, 0
+                    for name, k in pairs(r.kills) do
+                        local rk = ref.kills[name]
+                        if rk and k.dur - rk.dur > wd then wb, wd = name, k.dur - rk.dur end
+                    end
+                    if wb then line = line .. string.format(ZT("，最多慢在 %s（+%s）", "; most of it at %s (+%s)"), wb, Dur(wd)) end
+                    if r.deaths > 0 then line = line .. string.format(ZT("，死亡 %d 次", ", %d deaths"), r.deaths) end
+                    notes[#notes + 1] = line
+                end
+            end
+        end
+        local cleared = 0
+        for _, r in ipairs(runs) do if r.clear then cleared = cleared + 1 end end
+        if cleared < #runs then
+            notes[#notes + 1] = string.format(ZT("%d 局里全清 %d 局", "%d of %d runs cleared"), #runs, cleared)
+        end
+        if not same then notes[#notes + 1] = ZT("选中的不是同一个副本（或难度不同），首领按名字对齐。", "The runs are not all the same dungeon and mode; bosses are matched by name.") end
+        local missing = 0
+        for _, r in ipairs(runs) do if not r.det and not r.loading then missing = missing + 1 end end
+        if missing > 0 then
+            notes[#notes + 1] = string.format(ZT("%d 局没有详细数据（服务器重启前打的），只对比总数。", "%d runs have no detail (played before a server restart); only their totals are compared."), missing)
+        end
+        if c.cut then notes[#notes + 1] = string.format(ZT("一次最多对比 %d 局，取了最近的 %d 局。", "At most %d runs at a time; the newest %d are shown."), CMP_MAX, CMP_MAX) end
+        return { key = table.concat(c.ids, ","), title = same and first and DCLDungeon(first.name) or nil,
+                 heroic = same and first and first.heroic or false, runs = runs, order = order, notes = notes }
+    end
+    function R.ShowCompare(open)
+        if not R.cmp then return end
+        local m = R.CompareModel()
+        if #m.runs == 0 then return end
+        if open then DCStats.OpenCompare(m) else DCStats.RefreshCompare(m) end
+    end
+
     local function Menu(d)
         local menu = { { text = DCLDungeon(d.name), isTitle = true, notCheckable = true } }
         local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
@@ -6359,30 +6660,118 @@ do
             R.ShowStats(d.id, nil)   -- open now with the summary; the detail fills in on reply
             R.wantDetail = d.id
         end })
-        add({ text = DCL("Delete this run"), func = function()
-            local st = Store()
-            st.deleted[d.id] = true
-            for i, x in ipairs(st.list) do if x.id == d.id then table.remove(st.list, i); break end end
-            SendDcCommand("myrundel", d.id, true)
-            R.Render()
-        end })
+        -- DCRUN2A: compare with the same dungeon
+        local same, fast = {}, Bests()[Key(d)]
+        for _, x in ipairs(Store().list) do
+            if Key(x) == Key(d) and x.result ~= "lost" and #same < CMP_MAX then same[#same + 1] = x end
+        end
+        if fast and fast.id ~= d.id then
+            add({ text = ZT("和这个副本最快的一次对比", "Compare with this dungeon's fastest clear"), func = function() R.Compare({ d, fast }) end })
+        end
+        if #same >= 2 then
+            add({ text = string.format(ZT("对比这个副本最近 %d 次", "Compare the last %d runs here"), #same), func = function() R.Compare(same) end })
+        end
+        add({ text = DCL("Delete this run"), func = function() R.DeleteIds({ d.id }) end })
+        local lost = LostRuns()
+        if #lost > 0 then
+            add({ text = string.format(ZT("清除已中断的记录（%d）", "Remove interrupted runs (%d)"), #lost), func = function() R.DeleteIds((function()
+                local ids = {}
+                for _, x in ipairs(lost) do ids[#ids + 1] = x.id end
+                return ids
+            end)()) end })
+        end
         add({ text = "|cffff5050" .. DCL("Delete all runs") .. "|r", func = function()
             StaticPopup_Show("DUNGEONCLEAR_RUNS_DELETE_ALL", DCL("Delete all your dungeon runs?"))
         end })
         add({ text = CANCEL, func = function() CloseDropDownMenus() end })
         EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
     end
+    -- DCRUN2A: right-click on a selection of several
+    local function BatchMenu()
+        local list = SelList()
+        local menu = { { text = string.format(ZT("已选 %d 条", "%d selected"), #list), isTitle = true, notCheckable = true } }
+        local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
+        add({ text = string.format(ZT("对比统计（%d 局）", "Compare (%d runs)"), math.min(#list, CMP_MAX)), func = function() R.Compare(list) end })
+        add({ text = "|cffff5050" .. string.format(ZT("删除选中的 %d 条", "Delete the %d selected"), #list) .. "|r", func = function() AskDelete(list) end })
+        add({ text = ZT("取消选择", "Clear the selection"), func = function() ClearSel(); R.Render() end })
+        add({ text = CANCEL, func = function() CloseDropDownMenus() end })
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
+    end
+    -- DCRUN2A: click = pick this one (again = drop it), Ctrl = add / remove, Shift = a range
+    local function Click(d)
+        local list = Shown()
+        if IsShiftKeyDown() and anchor then
+            local a, b
+            for i, x in ipairs(list) do
+                if x.id == anchor then a = i end
+                if x.id == d.id then b = i end
+            end
+            if a and b then
+                if not IsControlKeyDown() then ClearSel() end
+                for i = math.min(a, b), math.max(a, b) do sel[list[i].id] = true end
+                R.Render()
+                return
+            end
+        end
+        if IsControlKeyDown() then
+            if sel[d.id] then sel[d.id] = nil else sel[d.id] = true end
+        else
+            local only = sel[d.id] and #SelList() == 1
+            ClearSel()
+            if not only then sel[d.id] = true end
+        end
+        anchor = d.id
+        R.Render()
+    end
     for _, r in ipairs(rows) do
-        r:SetScript("OnClick", function(self, button) if button == "RightButton" and self.d then Menu(self.d) end end)
+        r:SetScript("OnClick", function(self, button)
+            if not self.d then return end
+            if button == "RightButton" then
+                if sel[self.d.id] and #SelList() > 1 then BatchMenu() else Menu(self.d) end
+            else
+                Click(self.d)
+            end
+        end)
         r:SetScript("OnEnter", function(self)
             if not self.d then return end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine(DCLDungeon(self.d.name))
-            GameTooltip:AddLine(DCL("Right-click: run again / stats / delete"), 0.7, 0.7, 0.7)
+            GameTooltip:AddLine(ZT("右键：再刷一次 / 本局统计 / 对比 / 删除", "Right-click: run again / stats / compare / delete"), 0.7, 0.7, 0.7)
+            GameTooltip:AddLine(ZT("Ctrl+点击：多选   Shift+点击：连选", "Ctrl-click: pick several   Shift-click: a range"), 0.7, 0.7, 0.7)
             GameTooltip:Show()
         end)
         r:SetScript("OnLeave", function() GameTooltip:Hide() end)
     end
+
+    -- DCRUN2A: the filter menus
+    local function Pick(title, items, cur, set)
+        local menu = { { text = title, isTitle = true, notCheckable = true } }
+        for _, it in ipairs(items) do
+            menu[#menu + 1] = { text = it[2], checked = (cur == it[1]), func = function() set(it[1]); offset = 0; R.Render() end }
+        end
+        EasyMenu(menu, menuFrame, "cursor", 0, 0, "MENU")
+    end
+    fDungeon:SetScript("OnClick", function()
+        local count, names = {}, {}
+        for _, d in ipairs(Store().list) do
+            if not count[d.name] then names[#names + 1] = d.name end
+            count[d.name] = (count[d.name] or 0) + 1
+        end
+        table.sort(names, function(x, y) return DCLDungeon(x) < DCLDungeon(y) end)
+        local items = { { "all", ZT("全部副本", "All dungeons") } }
+        for _, nm in ipairs(names) do items[#items + 1] = { nm, string.format("%s  |cff999999(%d)|r", DCLDungeon(nm), count[nm]) } end
+        Pick(ZT("副本", "Dungeon"), items, Filter().dungeon, function(v) Filter().dungeon = v end)
+    end)
+    fResult:SetScript("OnClick", function()
+        Pick(ZT("结果", "Result"), { { "all", ZT("全部", "All") }, { "clear", DCL("Cleared") },
+            { "notclear", ZT("未全清（停止 / 团灭 / 离开）", "Not cleared (stopped / wiped / left)") },
+            { "open", ZT("未完成（进行中 / 已中断）", "Unfinished (in progress / interrupted)") } },
+            Filter().result, function(v) Filter().result = v end)
+    end)
+    fDiff:SetScript("OnClick", function()
+        Pick(ZT("难度", "Mode"), { { "all", ZT("全部", "All") }, { "normal", ZT("普通", "Normal") }, { "heroic", ZT("英雄", "Heroic") } },
+            Filter().diff, function(v) Filter().diff = v end)
+    end)
     col2:SetScript("OnMouseWheel", function(_, delta) offset = offset - delta * 3; R.Render() end)
 
     -- ask every 15 s while the column is shown (the first time right away)
