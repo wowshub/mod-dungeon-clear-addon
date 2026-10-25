@@ -15,6 +15,8 @@
 --   bosses     = { { name, status = "dead"|"current"|"skipped"|"alive", t, dur }, ... },
 --   deaths     = { { t, name, classId, killer, spell, amount, overkill, dmg5, heal5, healers, onBoss }, ... },
 --   taken      = { { src, spell, total, hits }, ... },
+--   fights     = { { boss, dur (s), total, members = { { name, total, classId }, ... } }, ... },   -- DCSTAT3A
+--   targets    = { { name, boss, total }, ... },                                                     -- DCSTAT3A
 --   healers    = { { name, heal, combat, moving, casting, low, lowIdle, minMana, castList }, ... },
 --   conditions = { "text", ... },          -- test: cheat tier, helpers ... (shown as warnings)
 --   tech       = { "text", ... },          -- test only; folded by default
@@ -115,7 +117,8 @@ local function SetClassIcon(tex, id)
 end
 
 -- icons are taken from spell ids (always valid), never from guessed file names
-local SEC_ICON = { party = 6673, bosses = 355, deaths = nil, taken = 772, healers = 2061, builds = 1459, tech = 1459 }
+local SEC_ICON = { party = 6673, bosses = 355, deaths = nil, taken = 772, healers = 2061, builds = 1459, tech = 1459,
+                   fights = 1752, targets = 5308 }   -- DCSTAT3A: Sinister Strike, Execute
 local ROLE_ICON = { tank = 71, heal = 2061, dps = 1752 }
 
 -- item level colour against a reference
@@ -514,6 +517,71 @@ function View:Render(m, keepScroll)
         end
     end
 
+    -- ---- boss fights (DCSTAT3A): who did how much on each boss, party DPS
+    if m.fights and #m.fights > 0 then
+        local allTotal, allDur = 0, 0
+        for _, f in ipairs(m.fights) do allTotal = allTotal + (f.total or 0); allDur = allDur + (f.dur or 0) end
+        local sum = string.format("%s %s", T("首领总伤害", "boss damage"), Kfmt(allTotal))
+        if allDur > 0 then sum = sum .. string.format("  .  %s %s", T("平均每秒", "avg per s"), Kfmt(allTotal / allDur)) end
+        local body, nexty = self:Section(y, "fights", SEC_ICON.fights, T("首领战输出", "Boss fights"), sum, C.orange, false)
+        if body then
+            local per = compact and 3 or 5
+            local ry = body
+            for _, f in ipairs(m.fights) do
+                local shown = math.min(#f.members, per)
+                local h = 26 + math.max(1, shown) * 18 + 6
+                self:Rect("BACKGROUND", 0, ry, W, h, C.card)
+                self:Text(10, ry + 6, Cut(f.boss or "?", compact and 14 or 22), 13, C.gold)
+                local right = string.format("%s   %s", Clock(f.dur or 0), Kfmt(f.total or 0))
+                if (f.dur or 0) > 0 then right = right .. string.format("   %s/s", Kfmt((f.total or 0) / f.dur)) end
+                self:Text(W - 8, ry + 7, right, 11, C.grey, "RIGHT")
+                local maxv = (f.members[1] and f.members[1].total) or 1
+                local ly = ry + 26
+                for i = 1, shown do
+                    local mm = f.members[i]
+                    self:Text(18, ly, Cut(mm.name or "?", 10), 12, ClassRGB(mm.classId))
+                    local bx = compact and 100 or 130
+                    local bw = W - bx - 118
+                    self:Bar(bx, ly + 3, bw, 9, (mm.total or 0) / maxv, C.orange)
+                    self:Text(W - 8, ly, string.format("%s  %d%%", Kfmt(mm.total), math.floor((mm.total or 0) * 100 / math.max(1, f.total or 1) + 0.5)), 11, C.white, "RIGHT")
+                    ly = ly + 18
+                end
+                if #f.members > shown then self:Text(18, ly - 2, string.format(T("还有 %d 位", "%d more"), #f.members - shown), 10, C.dim) end
+                ry = ry + h + 4
+            end
+            y = ry + 8
+        else
+            y = nexty
+        end
+    end
+
+    -- ---- what the party hit (DCSTAT3A)
+    if m.targets and #m.targets > 0 then
+        local boss, trash = 0, 0
+        for _, tg in ipairs(m.targets) do if tg.boss then boss = boss + tg.total else trash = trash + tg.total end end
+        local all = math.max(1, boss + trash)
+        local sum = string.format("%s %d%%  .  %s %d%%", T("首领", "boss"), math.floor(boss * 100 / all + 0.5), T("小怪", "trash"), math.floor(trash * 100 / all + 0.5))
+        local body, nexty = self:Section(y, "targets", SEC_ICON.targets, T("输出目标", "Damage by target"), sum, C.purple, compact)
+        if body then
+            local show = math.min(#m.targets, compact and 4 or 8)
+            local RH = 22
+            self:Rect("BACKGROUND", 0, body, W, show * RH + 8, C.card)
+            local ry = body + 5
+            local maxv = m.targets[1].total or 1
+            for i = 1, show do
+                local tg = m.targets[i]
+                self:Text(10, ry + 2, Cut(tg.name or "?", compact and 10 or 16), 12, tg.boss and C.gold or C.white)
+                local bx = compact and 130 or 190
+                self:Bar(bx, ry + 6, W - bx - 90, 9, (tg.total or 0) / maxv, tg.boss and C.gold or C.purple)
+                self:Text(W - 8, ry + 2, Kfmt(tg.total), 12, C.white, "RIGHT")
+                ry = ry + RH
+            end
+            y = body + show * RH + 16
+        else
+            y = nexty
+        end
+    end
+
     -- ---- deaths
     if m.deaths then
         local n = #m.deaths
@@ -713,6 +781,11 @@ function S.Open(m)
     if not ok then DEFAULT_CHAT_FRAME:AddMessage("|cffff3333DungeonClear stats: " .. tostring(err) .. "|r") end
     win:Show()
     win:Raise()
+end
+
+function S.OpenKey()  -- DCSTAT3A: the key of the run the stats window shows, nil when it is closed
+    if win and win:IsShown() and win.view then return win.view.key end
+    return nil
 end
 
 function S.Refresh(m)  -- refresh the window only when it is open AND shows this same run

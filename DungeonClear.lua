@@ -6378,6 +6378,7 @@ do
 
     -- server replies: MR rows (upserted by id), MRX detail -> the stats window
     local pendingDetail = {}
+    R.shownResult = {}   -- DCSTAT3A: the result the open stats window was drawn with, per run
     function R.OnMsg(kind, msg)
         if kind == "MR_START" then
             R.seen = {}                                  -- DCRUN2A: which runs the server still has
@@ -6404,10 +6405,22 @@ do
                 R.seen = nil
             end
             R.Render()
+            -- DCSTAT3A: a stats window that is open for a run which was still going (or whose list row has
+            -- changed since) asks for the detail again; the window used to keep the first snapshot
+            local key = DCStats and DCStats.OpenKey and DCStats.OpenKey()
+            local openId = key and key:match("^clear:(.+)$")
+            if openId then
+                for _, x in ipairs(Store().list) do
+                    if x.id == openId and (x.result == "running" or R.shownResult[openId] ~= x.result) then
+                        R.wantDetail = openId
+                        Queue("myrun", openId)
+                    end
+                end
+            end
         elseif kind == "MRX" then
             local _, id, what, a, b, c, d, e, f = strsplit("\t", msg)
             local det = pendingDetail[id]
-            if not det then det = { members = {}, bosses = {}, deaths = {}, ilvl = {}, taken = {}, healers = {} }; pendingDetail[id] = det end
+            if not det then det = { members = {}, bosses = {}, deaths = {}, ilvl = {}, taken = {}, healers = {}, out = {}, targets = {}, fights = {}, fightBy = {} }; pendingDetail[id] = det end
             if what == "R" then det.reason = a
             elseif what == "S" then det.restarts = tonumber(a) or 0
             elseif what == "M" then det.members[#det.members + 1] = { name = a, cls = tonumber(b) or 0, level = tonumber(c) or 0, kind = d }
@@ -6422,7 +6435,18 @@ do
                     last.amount, last.overkill, last.dmg5, last.heal5 = tonumber(c), tonumber(d), tonumber(e), tonumber(f)
                 end
             elseif what == "T" then det.taken[#det.taken + 1] = { src = a, spell = b, total = tonumber(c) or 0, hits = tonumber(d) or 0 }
-            elseif what == "H" then det.healers[#det.healers + 1] = { name = a, total = tonumber(b) or 0 } end
+            elseif what == "H" then det.healers[#det.healers + 1] = { name = a, total = tonumber(b) or 0 }
+            -- DCSTAT3A: damage done / taken per member, per target, per boss fight
+            elseif what == "O" then det.out[a] = { dealt = tonumber(b) or 0, taken = tonumber(c) or 0 }
+            elseif what == "OT" then det.targets[#det.targets + 1] = { name = a, boss = (b == "1"), total = tonumber(c) or 0 }
+            elseif what == "OB" then
+                local fight = { boss = a, dur = tonumber(b) or 0, total = tonumber(c) or 0, members = {} }
+                det.fights[#det.fights + 1] = fight
+                det.fightBy[a] = fight
+            elseif what == "OM" then
+                local fight = det.fightBy[a]
+                if fight then fight.members[#fight.members + 1] = { name = b, total = tonumber(c) or 0 } end
+            end
         elseif kind == "MRX_END" then
             local id = msg:match("^MRX_END\t(.*)$")
             local det = pendingDetail[id]
@@ -6444,6 +6468,7 @@ do
         if not d or not DCStats then return end
         det = det or d.det or { members = {}, bosses = {}, deaths = {} }   -- DCRUN2A: the kept detail
         det.ilvl, det.taken, det.healers = det.ilvl or {}, det.taken or {}, det.healers or {}
+        det.out, det.targets, det.fights = det.out or {}, det.targets or {}, det.fights or {}
         local ZT = DCStats.T
         local green, red, yellow, grey = { 0.25, 0.88, 0.38 }, { 1.0, 0.31, 0.28 }, { 1.0, 0.82, 0.0 }, { 0.55, 0.60, 0.66 }
         local RCOL = { clear = green, wipe = red, death = { 1.0, 0.59, 0.16 }, running = yellow }
@@ -6456,12 +6481,18 @@ do
         local parts = { Date(d.start), DCL(t[1]) }
         if (det.restarts or 0) > 0 then parts[#parts + 1] = ZT("重启 ", "restarts ") .. det.restarts end
         m.subline = table.concat(parts, "   ")
-        local bossN, total = d.bosses or 0, d.total or 0
+        -- DCSTAT3A: the list row is only refreshed every 15 s, the detail is newer: never show less than it holds
+        local bossN, total = math.max(d.bosses or 0, #det.bosses), d.total or 0
+        local lastKill = (#det.bosses > 0) and det.bosses[#det.bosses].t or 0
+        local dur = d.dur or 0
+        if d.result == "running" and lastKill > dur then dur = lastKill end
+        local deathN = math.max(d.deaths or 0, #det.deaths)
+        R.shownResult[id] = d.result
         m.tiles = {
             { label = ZT("首领", "Bosses"), value = string.format("%d/%d", bossN, total),
               rgb = (total > 0 and bossN >= total) and green or { 0.91, 0.93, 0.96 }, frac = total > 0 and (bossN / total) or 0 },
-            { label = ZT("用时", "Time"), value = Dur(d.dur) },
-            { label = ZT("死亡", "Deaths"), value = tostring(d.deaths or 0), rgb = ((d.deaths or 0) > 0) and red or green },
+            { label = ZT("用时", "Time"), value = Dur(dur) },
+            { label = ZT("死亡", "Deaths"), value = tostring(deathN), rgb = (deathN > 0) and red or green },
         }
         local cls, deathsBy = {}, {}
         for _, e in ipairs(det.deaths) do deathsBy[e.name] = (deathsBy[e.name] or 0) + 1 end
@@ -6474,7 +6505,9 @@ do
             m.party[#m.party + 1] = { name = mem.name, classId = mem.cls, kind = DCL(KIND[mem.kind] or "real player"),
                                       deaths = deathsBy[mem.name] or 0, me = (mem.name == me),
                                       ilvl = iv and iv.ilvl > 0 and iv.ilvl or nil, role = iv and iv.role ~= "" and iv.role or nil,
-                                      heal = healBy[mem.name] }
+                                      heal = healBy[mem.name],
+                                      dmg = det.out[mem.name] and det.out[mem.name].dealt > 0 and det.out[mem.name].dealt or nil,
+                                      taken = det.out[mem.name] and det.out[mem.name].taken > 0 and det.out[mem.name].taken or nil }
         end
         local prev = 0
         for _, e in ipairs(det.bosses) do
@@ -6491,12 +6524,27 @@ do
         for _, t in ipairs(det.taken) do
             m.taken[#m.taken + 1] = { src = t.src, spell = t.spell, total = t.total, hits = t.hits }
         end
+        -- DCSTAT3A: one block per boss fight (who did how much, party DPS), and what the party hit the most
+        m.fights, m.targets = {}, {}
+        for _, f in ipairs(det.fights) do
+            local fight = { boss = f.boss, dur = f.dur, total = f.total, members = {} }
+            for _, mm in ipairs(f.members) do
+                fight.members[#fight.members + 1] = { name = mm.name, total = mm.total, classId = cls[mm.name] }
+            end
+            m.fights[#m.fights + 1] = fight
+        end
+        for _, tg in ipairs(det.targets) do
+            m.targets[#m.targets + 1] = { name = tg.name, boss = tg.boss, total = tg.total }
+        end
         if det.reason and det.reason ~= "" then m.notes[#m.notes + 1] = DCLDetail(det.reason) end
         if #det.taken == 0 and next(det.ilvl) == nil then
             m.notes[#m.notes + 1] = ZT("这局是在装等、承伤、死亡原因开始记录之前打的，所以没有这些数据。",
                                         "This run was recorded before item level, damage taken and death causes were tracked.")
+        elseif next(det.out) == nil then
+            m.notes[#m.notes + 1] = ZT("这局没有输出量记录（服务器是在输出量记录加入之前开的这一局）。", "No damage-done record for this run (it started before damage done was recorded).")
         else
-            m.notes[#m.notes + 1] = ZT("输出量暂未记录，之后的版本加入。", "Damage done is not recorded yet; it comes in a later version.")
+            m.notes[#m.notes + 1] = ZT("输出量只统计打在怪物身上的伤害，宠物算主人，NPC机器人单独一行；NPC机器人的承伤暂时不记录。",
+                                        "Damage done counts hits on creatures; pets count for their owner, NPCBots get their own line. NPCBot damage taken is not recorded yet.")
         end
         DCStats.Open(m)
     end
@@ -6655,6 +6703,7 @@ do
             Say(DCL("Queued: the dungeon is reset and the clear starts again."))
         end })
         add({ text = DCL("Run stats"), func = function()
+            Queue("myruns", "")   -- DCSTAT3A: refresh the list row too, so the summary matches the detail
             R.wantDetail = d.id
             SendDcCommand("myrun", d.id, true)
             R.ShowStats(d.id, nil)   -- open now with the summary; the detail fills in on reply
