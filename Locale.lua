@@ -712,6 +712,7 @@ local zh = {
     ["Select a running test first."] = "请先在上面选中一个运行中的测试。",
     ["Kill everyone who can resurrect"] = "杀死所有会复活的",
     ["Kill the healers"] = "杀死所有治疗",
+    ["Kill the tank"] = "杀死坦克",
     ["Leave only the tank alive"] = "只留坦克",
     ["Wipe the party"] = "全队团灭",
     ["Resurrect everyone"] = "全队复活",
