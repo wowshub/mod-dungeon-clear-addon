@@ -5273,7 +5273,7 @@ do
         return false
     end
     local function Invite(d)
-        if d.npc then return end
+        if d.npc then SendDcCommand("npcjoin", d.name, true); return end  -- DCNPC2A: the server puts your own NPCBot into your group
         if d.mine and not d.online then
             Chat(".playerbot bot add " .. d.name)   -- your own offline character: log it in as a bot
         else
@@ -5316,12 +5316,9 @@ do
                 r.star.tex:SetDesaturated(not IsFav(d.name))
                 r.star.tex:SetAlpha(IsFav(d.name) and 1 or 0.35)
                 local inGroup = InGroup(d.name)
-                if d.npc then r.act:Hide()
-                else
-                    r.act:Show()
-                    if inGroup then r.act:Disable() else r.act:Enable() end
-                    DCBind(r.act, inGroup and "In party" or (d.mine and not d.online and "Log in" or "Invite"))
-                end
+                r.act:Show()  -- DCNPC2A: an NPCBot has the same Invite button
+                if inGroup then r.act:Disable() else r.act:Enable() end
+                DCBind(r.act, inGroup and "In party" or ((not d.npc) and d.mine and not d.online and "Log in" or "Invite"))
                 r:Show()
             end
         end
@@ -5417,7 +5414,7 @@ do
         local menu = { { text = ClassHex(CLASS_BY_ID[d.cls]) .. d.name .. "|r", isTitle = true, notCheckable = true } }
         local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
         if d.npc then
-            add({ text = DCL("NPCBots are managed with the NPCBot commands."), disabled = true })
+            add({ text = DCL("Invite"), disabled = InGroup(d.name), func = function() Invite(d) end })  -- DCNPC2A
         else
             add({ text = (d.mine and not d.online) and DCL("Log in and invite") or DCL("Invite"),
                   disabled = InGroup(d.name), func = function() Invite(d) end })
@@ -5473,14 +5470,13 @@ do
             local d = self.data
             if not d then return end
             GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:AddLine(d.name)
-            if not d.npc then GameTooltip:AddLine(DCL("Drag onto My party to invite"), 1, 1, 1)
-            else GameTooltip:AddLine(DCL("Drag onto a favourite group to add it"), 1, 1, 1) end  -- DCGRP1A
+            GameTooltip:AddLine(DCL("Drag onto My party to invite"), 1, 1, 1)  -- DCNPC2A: an NPCBot too
             GameTooltip:AddLine(DCL("Right-click: more actions"), 0.7, 0.7, 0.7); GameTooltip:Show()
         end)
         r:SetScript("OnLeave", function() GameTooltip:Hide() end)
         r:SetScript("OnDragStart", function(self)
             local d = self.data
-            if not d or (d.npc and not shell.c2.active) or (InGroup(d.name) and not shell.c2.active) then return end  -- DCUI3C2; DCGRP1A: an NPCBot only into a group
+            if not d or (InGroup(d.name) and not shell.c2.active) then return end  -- DCUI3C2
             C1.drag = d
             GameTooltip:Hide()
             SetClassIcon(ghost.icon, CLASS_BY_ID[d.cls])
@@ -5765,7 +5761,9 @@ do
         local function add(u)
             if UnitExists(u) then
                 local _, tok = UnitClass(u)
-                list[#list + 1] = { name = UnitName(u), cls = tok, level = UnitLevel(u), role = RoleFromUnit(u) }
+                -- DCNPC2A: an NPCBot is a creature, not a player; remember that so "Form" can ask the server for it
+                list[#list + 1] = { name = UnitName(u), cls = tok, level = UnitLevel(u), role = RoleFromUnit(u),
+                                    npc = (not UnitIsPlayer(u)) or nil }
             end
         end
         local n = GetNumRaidMembers()
@@ -5850,15 +5848,18 @@ do
                 if m.npc then npcMissing[#npcMissing + 1] = m.name else names[#names + 1] = m.name end
             end
         end
-        -- DCGRP1A: an NPCBot is not invited by name; it is with you when it is hired and standing next to you
-        if #npcMissing > 0 then
-            Say(string.format(DCL("NPCBots cannot be invited from here (they come with you when hired and near you): %s"), table.concat(npcMissing, ", ")))
+        -- DCNPC2A: your own hired NPCBots are put into your group by the server
+        -- (a bot hired by a character that is not in your group yet can only join after that character did,
+        -- so with people to invite the request is sent when the invitations are done)
+        if #npcMissing > 0 and #names == 0 then
+            SendDcCommand("npcjoin", table.concat(npcMissing, ","), true)
+            Say(string.format(DCL("Asked the server to put your NPCBots into the group: %s"), table.concat(npcMissing, ", ")))
         end
         if #names == 0 then
             if #npcMissing == 0 then Say(DCL("Everyone in this group is already with you.")) end
             return
         end
-        local w = { size = g.size, names = {}, got = {}, queue = {}, offline = {}, endAt = GetTime() + 6 }
+        local w = { size = g.size, names = {}, got = {}, queue = {}, offline = {}, endAt = GetTime() + 6, npcNames = npcMissing }
         for _, n in ipairs(names) do w.names[n] = true end
         C2.want = w
         local chunk = ""
@@ -5909,9 +5910,18 @@ do
         if GetTime() < w.endAt then return end
         local missing = {}
         for n in pairs(w.names) do if not w.got[n] then missing[#missing + 1] = n end end
-        if #missing > 0 then Say(string.format(DCL("Not found (renamed or deleted?): %s"), table.concat(missing, ", "))) end
+        if #missing > 0 then
+            Say(string.format(DCL("Not found (renamed or deleted?): %s"), table.concat(missing, ", ")))
+            -- DCNPC2A: a group saved before NPCBots were marked lists them as ordinary names; let the server try them
+            w.npcNames = w.npcNames or {}
+            for _, n in ipairs(missing) do w.npcNames[#w.npcNames + 1] = n end
+        end
         if #w.offline > 0 then Say(string.format(DCL("Offline and not on your account, cannot be logged in: %s"), table.concat(w.offline, ", "))) end
         Say(DCL("Group invitations sent."))
+        if w.npcNames and #w.npcNames > 0 then  -- DCNPC2A
+            SendDcCommand("npcjoin", table.concat(w.npcNames, ","), true)
+            Say(string.format(DCL("Asked the server to put your NPCBots into the group: %s"), table.concat(w.npcNames, ", ")))
+        end
         C2.want = nil
         self:Hide()
     end)
@@ -7496,7 +7506,13 @@ do
     end)
     local function InviteAll(list)
         local n = 0
-        for _, d in ipairs(list) do if not d.npc and not InGroup(d.name) then queue[#queue + 1] = d; n = n + 1 end end
+        local npcNames = {}
+        for _, d in ipairs(list) do
+            if d.npc then
+                if not InGroup(d.name) then npcNames[#npcNames + 1] = d.name end  -- DCNPC2A
+            elseif not InGroup(d.name) then queue[#queue + 1] = d; n = n + 1 end
+        end
+        if #npcNames > 0 then SendDcCommand("npcjoin", table.concat(npcNames, ","), true) end
         if n == 0 then return end
         Say(string.format(DCL("Inviting %d characters..."), n))
         qacc = 0

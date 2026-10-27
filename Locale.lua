@@ -538,6 +538,7 @@ local zh = {
     ["Right-click: more actions"] = "右键：更多操作",
     ["Log in and invite"] = "上线并邀请",
     ["NPCBots are managed with the NPCBot commands."] = "NPC 机器人请用 NPCBot 命令管理。",
+    ["Asked the server to put your NPCBots into the group: %s"] = "已请求服务器把你的 NPC 机器人拉进队伍：%s",
     ["Drag onto My party to invite"] = "左键拖到“我的队伍”即可邀请",
     ["Drag: scale the whole panel"] = "拖动：缩放整个面板",  -- DCUI3B5
     ["Double-click: fit the screen"] = "双击：恢复适合屏幕的大小",  -- DCUI3B5
