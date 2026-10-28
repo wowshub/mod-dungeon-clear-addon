@@ -5977,7 +5977,10 @@ do
         local menu = { { text = ClassHex(m.cls) .. m.name .. "|r", isTitle = true, notCheckable = true } }
         local function add(t) t.notCheckable = true; menu[#menu + 1] = t end
         add({ text = DCL("Invite this character"), disabled = InGroup(m.name), func = function()
-            if shell.c1 and shell.c1.myChars[m.name] then Chat(".playerbot bot add " .. m.name) else InviteUnit(m.name) end
+            -- DCNPC2B: an NPCBot is not a player, InviteUnit says "player not found". Go through the same path as
+            -- the "Form" button, which asks the server for NPCBots and also covers groups saved before they were marked.
+            if shell.c1 and shell.c1.myChars[m.name] then Chat(".playerbot bot add " .. m.name)
+            else C2.Form({ name = g.name, size = g.size, members = { m } }) end
         end })
         for _, rk in ipairs({ { "tank", "Role: tank" }, { "heal", "Role: healer" }, { "dps", "Role: DPS" } }) do
             menu[#menu + 1] = { text = DCL(rk[2]), checked = m.role == rk[1],
